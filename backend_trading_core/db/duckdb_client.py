@@ -1,59 +1,77 @@
-import duckdb
-import os
-from datetime import datetime
+"""Small durable audit store with a standard-library SQLite fallback."""
+from __future__ import annotations
 
-# File cơ sở dữ liệu sẽ được tạo ngay trong thư mục db/
-DB_PATH = os.path.join(os.path.dirname(__file__), "omni_quant.duckdb")
+import json
+import os
+import sqlite3
+from datetime import datetime, timezone
+from pathlib import Path
+from threading import RLock
+
+
+DB_PATH = Path(os.getenv("OMNI_QUANT_DB_PATH", Path(__file__).with_name("omni_quant.sqlite3")))
+
 
 class DuckDBClient:
-    def __init__(self):
-        # Kết nối tới file DuckDB, tự động tạo nếu chưa có
-        self.conn = duckdb.connect(DB_PATH)
+    """Compatibility name retained for the UI; storage is SQLite by default."""
+
+    def __init__(self, path: str | Path = DB_PATH) -> None:
+        self.path = Path(path)
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        self._lock = RLock()
+        self.conn = sqlite3.connect(self.path, check_same_thread=False)
+        self.conn.row_factory = sqlite3.Row
         self._init_tables()
 
-    def _init_tables(self):
-        """Khởi tạo cấu trúc bảng cho Lịch sử lệnh và Log của AI"""
-        self.conn.execute("""
-            CREATE SEQUENCE IF NOT EXISTS log_seq;
-            
-            CREATE TABLE IF NOT EXISTS ai_debate_logs (
-                id INTEGER DEFAULT nextval('log_seq'),
-                timestamp TIMESTAMP,
-                agent_name VARCHAR,
-                symbol VARCHAR,
-                decision VARCHAR,
-                reasoning TEXT
-            );
-            
-            CREATE TABLE IF NOT EXISTS trade_history (
-                order_id VARCHAR,
-                timestamp TIMESTAMP,
-                symbol VARCHAR,
-                side VARCHAR,
-                price DOUBLE,
-                amount DOUBLE,
-                status VARCHAR
-            );
-        """)
+    def _init_tables(self) -> None:
+        with self._lock, self.conn:
+            self.conn.executescript("""
+                CREATE TABLE IF NOT EXISTS ai_debate_logs (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    timestamp TEXT NOT NULL,
+                    agent_name TEXT NOT NULL,
+                    symbol TEXT NOT NULL,
+                    decision TEXT NOT NULL,
+                    reasoning TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS trade_history (
+                    order_id TEXT PRIMARY KEY,
+                    timestamp TEXT NOT NULL,
+                    symbol TEXT NOT NULL,
+                    side TEXT NOT NULL,
+                    price REAL NOT NULL,
+                    amount REAL NOT NULL,
+                    status TEXT NOT NULL,
+                    metadata TEXT NOT NULL DEFAULT '{}'
+                );
+            """)
 
-    def insert_ai_log(self, agent_name: str, symbol: str, decision: str, reasoning: str):
-        now = datetime.now()
-        self.conn.execute(
-            "INSERT INTO ai_debate_logs (timestamp, agent_name, symbol, decision, reasoning) VALUES (?, ?, ?, ?, ?)",
-            [now, agent_name, symbol, decision, reasoning]
-        )
-        print(f"[DuckDB] Đã lưu log của {agent_name} cho mã {symbol}")
+    @staticmethod
+    def _now() -> str:
+        return datetime.now(timezone.utc).isoformat()
 
-    def insert_trade(self, order_id: str, symbol: str, side: str, price: float, amount: float, status: str):
-        now = datetime.now()
-        self.conn.execute(
-            "INSERT INTO trade_history (order_id, timestamp, symbol, side, price, amount, status) VALUES (?, ?, ?, ?, ?, ?, ?)",
-            [order_id, now, symbol, side, price, amount, status]
-        )
+    def insert_ai_log(self, agent_name: str, symbol: str, decision: str, reasoning: str) -> None:
+        with self._lock, self.conn:
+            self.conn.execute("INSERT INTO ai_debate_logs(timestamp, agent_name, symbol, decision, reasoning) VALUES (?, ?, ?, ?, ?)", (self._now(), agent_name, symbol, decision, reasoning))
 
-    def fetch_recent_logs(self, limit: int = 50):
-        # Xuất thẳng ra Pandas/Polars DataFrame cực nhanh
-        return self.conn.execute("SELECT * FROM ai_debate_logs ORDER BY timestamp DESC LIMIT ?", [limit]).df()
+    def insert_trade(self, order_id: str, symbol: str, side: str, price: float, amount: float, status: str, metadata: dict | None = None) -> None:
+        with self._lock, self.conn:
+            self.conn.execute("INSERT OR REPLACE INTO trade_history(order_id, timestamp, symbol, side, price, amount, status, metadata) VALUES (?, ?, ?, ?, ?, ?, ?, ?)", (order_id, self._now(), symbol, side, price, amount, status, json.dumps(metadata or {})))
 
-# Khởi tạo Singleton pattern để dùng chung toàn hệ thống
-db_client = DuckDBClient()
+    def fetch_recent_logs(self, limit: int = 50) -> list[dict]:
+        limit = max(1, min(int(limit), 500))
+        with self._lock:
+            rows = self.conn.execute("SELECT * FROM ai_debate_logs ORDER BY id DESC LIMIT ?", (limit,)).fetchall()
+        return [dict(row) for row in rows]
+
+    get_recent_ai_logs = fetch_recent_logs
+
+    def fetch_recent_trades(self, limit: int = 50) -> list[dict]:
+        limit = max(1, min(int(limit), 500))
+        with self._lock:
+            rows = self.conn.execute("SELECT * FROM trade_history ORDER BY timestamp DESC LIMIT ?", (limit,)).fetchall()
+        return [dict(row) for row in rows]
+
+
+_db_path = os.getenv("OMNI_QUANT_DB_PATH", str(DB_PATH))
+db_client = DuckDBClient(_db_path)

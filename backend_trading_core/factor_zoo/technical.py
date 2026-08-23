@@ -1,50 +1,65 @@
+"""Deterministic technical features and a conservative signal policy."""
+from __future__ import annotations
+
 import pandas as pd
+
+from core.models import Signal
+
 
 def calculate_rsi(series: pd.Series, period: int = 14) -> pd.Series:
     delta = series.diff()
-    gain = (delta.where(delta > 0, 0)).rolling(window=period).mean()
-    loss = (-delta.where(delta < 0, 0)).rolling(window=period).mean()
-    rs = gain / loss
+    gain = delta.clip(lower=0).ewm(alpha=1 / period, adjust=False, min_periods=period).mean()
+    loss = (-delta.clip(upper=0)).ewm(alpha=1 / period, adjust=False, min_periods=period).mean()
+    rs = gain / loss.replace(0, pd.NA)
     return 100 - (100 / (1 + rs))
 
+
 def get_technical_context(df: pd.DataFrame) -> dict:
-    """Hệ thống lõi phân tích Động lượng & Biến động"""
-    if len(df) < 35:
-        return {}
-        
-    try:
-        # 1. Tự tính RSI (14)
-        df['RSI_14'] = calculate_rsi(df['close'], period=14)
-        rsi_val = df['RSI_14'].iloc[-1]
-        if pd.isna(rsi_val): rsi_val = 50.0 
-        
-        # 2. Tự tính MACD (12, 26, 9)
-        ema_12 = df['close'].ewm(span=12, adjust=False).mean()
-        ema_26 = df['close'].ewm(span=26, adjust=False).mean()
-        macd = ema_12 - ema_26
-        signal = macd.ewm(span=9, adjust=False).mean()
-        macd_hist = (macd - signal).iloc[-1] # Lấy mốc Histogram cuối
-        
-        # 3. Tự tính ATR (14) - Đo lường biến động
-        high_low = df['high'] - df['low']
-        high_close = (df['high'] - df['close'].shift()).abs()
-        low_close = (df['low'] - df['close'].shift()).abs()
-        tr = pd.concat([high_low, high_close, low_close], axis=1).max(axis=1)
-        atr_val = tr.rolling(14).mean().iloc[-1]
-            
-        # 4. SMC: Quét Thanh Khoản
-        recent_low = df['low'].rolling(window=10).min().iloc[-2] 
-        current_low = df['low'].iloc[-1]
-        current_close = df['close'].iloc[-1]
-        liq_sweep_bullish = (current_low < recent_low) and (current_close > recent_low)
-        
-        return {
-            "rsi": round(rsi_val, 2),
-            "macd_hist": round(macd_hist, 2),
-            "atr": round(atr_val, 2),
-            "liquidity_sweep_bullish": liq_sweep_bullish,
-            "current_price": current_close
-        }
-    except Exception as e:
-        print(f"[FactorZoo] Lỗi tính toán kỹ thuật: {e}")
-        return {}
+    if not isinstance(df, pd.DataFrame) or len(df) < 35:
+        return {"ready": False, "reason": "at least 35 OHLCV rows are required"}
+    required = {"open", "high", "low", "close", "volume"}
+    if not required.issubset(df.columns):
+        return {"ready": False, "reason": f"missing columns: {sorted(required - set(df.columns))}"}
+    work = df.copy()
+    close = pd.to_numeric(work["close"], errors="coerce")
+    high = pd.to_numeric(work["high"], errors="coerce")
+    low = pd.to_numeric(work["low"], errors="coerce")
+    if close.isna().any() or high.isna().any() or low.isna().any() or (close <= 0).any():
+        return {"ready": False, "reason": "invalid OHLC values"}
+    rsi = calculate_rsi(close)
+    ema_fast = close.ewm(span=12, adjust=False).mean()
+    ema_slow = close.ewm(span=26, adjust=False).mean()
+    macd = ema_fast - ema_slow
+    macd_signal = macd.ewm(span=9, adjust=False).mean()
+    true_range = pd.concat([high - low, (high - close.shift()).abs(), (low - close.shift()).abs()], axis=1).max(axis=1)
+    atr = true_range.rolling(14, min_periods=14).mean()
+    last = float(close.iloc[-1])
+    atr_value = float(atr.iloc[-1])
+    rsi_value = float(rsi.iloc[-1]) if pd.notna(rsi.iloc[-1]) else 50.0
+    macd_hist = float((macd - macd_signal).iloc[-1])
+    prior_low = float(low.iloc[-11:-1].min())
+    prior_high = float(high.iloc[-11:-1].max())
+    return {
+        "ready": True,
+        "rsi": round(rsi_value, 4),
+        "macd_hist": round(macd_hist, 8),
+        "atr": round(atr_value, 8),
+        "current_price": last,
+        "liquidity_sweep_bullish": bool(float(low.iloc[-1]) < prior_low and last > prior_low),
+        "liquidity_sweep_bearish": bool(float(high.iloc[-1]) > prior_high and last < prior_high),
+    }
+
+
+def deterministic_signal(context: dict) -> Signal:
+    """A deliberately simple baseline; it is not a profitability claim."""
+    if not context.get("ready") or context.get("atr", 0) <= 0:
+        return Signal.HOLD
+    rsi = context["rsi"]
+    hist = context["macd_hist"]
+    bullish = context.get("liquidity_sweep_bullish", False)
+    bearish = context.get("liquidity_sweep_bearish", False)
+    if bullish and hist > 0 and rsi < 70:
+        return Signal.BUY
+    if bearish and hist < 0 and rsi > 30:
+        return Signal.SELL
+    return Signal.HOLD

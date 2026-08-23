@@ -1,0 +1,32 @@
+# LuNu Trading
+
+LuNu Trading is a **paper-trading and research workspace** assembled from the user's six LuNu repositories. The current default runner is intentionally fail-closed: it reads public OHLCV data, computes deterministic features, applies explicit risk limits, and records simulated orders. It does **not** submit orders to an exchange.
+
+> This project is research software, not a promise of profit. Crypto markets are volatile, fees and slippage matter, and historical or simulated performance does not guarantee future results.
+
+## What was combined
+
+The repository keeps the six upstream projects as integration references rather than copying their incompatible source trees into the core. The target core uses clean interfaces for a staged combination of event-driven execution, exchange data, technical research, LLM-assisted analysis, portfolio tooling, and agent-based simulation. License boundaries are documented in [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md).
+
+| Capability | Current implementation | Planned integration boundary |
+|---|---|---|
+| Market data | Read-only CCXT OHLCV adapter | Optional exchange-specific adapters |
+| Signals | Deterministic RSI, MACD histogram, ATR and sweep baseline | Strategy plugins and reproducible backtests |
+| Risk | Per-trade risk, notional cap, max positions, daily loss and drawdown gates | Portfolio-level exposure and correlated-risk checks |
+| Execution | Paper-only executor with fees and slippage | Separate, manually enabled live connector after paper validation |
+| LLM | Advisory module retained but not on the order path | Research summaries, never unvalidated order authority |
+| UI/API | Read-only local FastAPI dashboard endpoints | Authenticated monitoring and configuration UI |
+
+## Safe local run
+
+Create a virtual environment, install `backend_trading_core/requirements.txt`, and copy `.env.example` to a local `.env` outside version control. The default mode remains paper-only. Start the backend with `PYTHONPATH=backend_trading_core python backend_trading_core/main.py`. The local API exposes `/health`, `/api/stats`, `/api/positions`, `/api/logs`, and `/api/trades`.
+
+Run tests with `PYTHONPATH=backend_trading_core python -m unittest discover -s tests -v`.
+
+## Before any future live-trading work
+
+Do not add live order placement to the current process. A live connector must be a separately reviewed component with exchange testnet support, explicit key permissions, a kill switch, idempotent client order IDs, reconciliation, stale-data protection, maximum loss shutdown, audit logs, and an independent manual approval step. API keys must be rotated if they were ever committed to a public repository.
+
+## Source attribution
+
+The six source repositories and their licenses are recorded in [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md). No GPL, LGPL or AGPL source tree is copied into the new core in this revision.
