@@ -42,27 +42,37 @@ class MarketFeed:
 
     async def fetch_ohlcv_loop(self) -> None:
         self.active = True
-        while self.active:
-            for symbol in self.symbols:
-                try:
-                    await self.fetch_once(symbol)
-                except Exception as exc:
-                    self._failure_count += 1
-                    event_engine.put(Event("FEED_ERROR", {"symbol": symbol, "error": str(exc), "failure_count": self._failure_count}))
-                    if self.exchange is not None:
-                        await self.exchange.close()
-                        self.exchange = None
-                    await asyncio.sleep(min(300, 2 ** min(self._failure_count, 8)))
-            await asyncio.sleep(self.poll_seconds)
+        try:
+            while self.active:
+                for symbol in self.symbols:
+                    try:
+                        await self.fetch_once(symbol)
+                    except asyncio.CancelledError:
+                        raise
+                    except Exception as exc:
+                        self._failure_count += 1
+                        event_engine.put(Event("FEED_ERROR", {"symbol": symbol, "error": str(exc), "failure_count": self._failure_count}))
+                        await self._close_exchange()
+                        await asyncio.sleep(min(300, 2 ** min(self._failure_count, 8)))
+                await asyncio.sleep(self.poll_seconds)
+        finally:
+            await self._close_exchange()
+            self.active = False
+
+    async def _close_exchange(self) -> None:
+        exchange, self.exchange = self.exchange, None
+        if exchange is not None:
+            try:
+                await exchange.close()
+            except Exception:
+                pass
 
     def start(self) -> asyncio.Task:
         return asyncio.create_task(self.fetch_ohlcv_loop())
 
     async def stop(self) -> None:
         self.active = False
-        if self.exchange is not None:
-            await self.exchange.close()
-            self.exchange = None
+        await self._close_exchange()
 
 
 market_feed = MarketFeed()
