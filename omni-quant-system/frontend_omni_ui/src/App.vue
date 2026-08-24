@@ -11,7 +11,7 @@
         <div class="stat-box">
           <span class="stat-label">VỐN (USD)</span>
           <span class="stat-value" :class="{'profit': capital > 10000, 'loss': capital < 10000}">
-            ${{ capital.toFixed(2) }}
+            ${{ Number(capital ?? 0).toFixed(2) }}
           </span>
         </div>
         <div class="stat-box">
@@ -36,14 +36,17 @@
         <div class="panel-header"><h2>🧠 Neural Debate Room</h2><span class="refresh-rate">Ping: 5s</span></div>
         <div class="logs-container">
           <div v-if="errorMessage" class="error-msg">{{ errorMessage }}</div>
-          <div v-for="log in filteredLogs" :key="log.id" class="log-card" :class="getLogClass(log)">
+                        <div v-for="log in filteredLogs" :key="log.id || `${log.timestamp}-${log.agent_name}-${log.decision}`" class="log-card" :class="getLogClass(log)">
+
             <div class="log-header">
-              <span class="agent-name">{{ getAgentIcon(log.agent_name) }} {{ log.agent_name }}</span>
+                              <span class="agent-name">{{ getAgentIcon(log?.agent_name) }} {{ log?.agent_name || 'System' }}</span>
+
               <span class="timestamp">{{ formatTime(log.timestamp) }}</span>
             </div>
             <div class="log-body">
-              <div class="decision-badge" :class="log.decision.toLowerCase()">{{ log.decision }}</div>
-              <p class="reasoning">"{{ log.reasoning }}"</p>
+                              <div class="decision-badge" :class="String(log?.decision || 'HOLD').toLowerCase()">{{ log?.decision || 'HOLD' }}</div>
+                <p class="reasoning">"{{ log?.reasoning || 'No reasoning recorded.' }}"</p>
+
             </div>
           </div>
         </div>
@@ -52,9 +55,9 @@
       <section class="panel execution-panel">
         <div class="panel-header"><h2>⚖️ Risk Manager</h2></div>
         <div class="execution-container">
-          <div v-for="log in riskLogs" :key="log.id" class="risk-card" :class="log.decision.toLowerCase()">
+          <div v-for="log in riskLogs" :key="log.id || `${log.timestamp}-${log.agent_name}-${log.decision}`" class="risk-card" :class="String(log?.decision || 'HOLD').toLowerCase()">
             <div class="risk-title">LỆNH DUYỆT</div>
-            <div class="risk-decision">{{ log.decision }}</div>
+            <div class="risk-decision">{{ log?.decision || 'HOLD' }}</div>
             <div class="risk-time">{{ formatTime(log.timestamp) }}</div>
           </div>
         </div>
@@ -122,17 +125,28 @@ const fetchData = async () => {
     const statRes = await fetch('http://127.0.0.1:8000/api/stats');
     const statResult = await statRes.json();
     if (statResult.success) {
-      capital.value = statResult.data.capital;
-      openPositions.value = statResult.data.open_positions;
+      const stats = statResult.data || {};
+      capital.value = Number(stats.capital ?? 0);
+      const positions = Array.isArray(stats.open_positions) ? stats.open_positions : [];
+      openPositions.value = positions.length;
     }
   } catch (error) {
     errorMessage.value = "⚠️ Mất kết nối tới Backend 8000.";
   }
 };
 
-const formatTime = (isoString) => new Date(isoString).toLocaleTimeString('vi-VN');
-const getAgentIcon = (name) => name.includes('Bull') ? '🐂' : name.includes('Bear') ? '🐻' : '🤖';
-const getLogClass = (log) => log.decision === 'BUY' ? 'bull-card' : log.decision === 'SELL' ? 'bear-card' : 'hold-card';
+const formatTime = (isoString) => {
+  const parsed = new Date(isoString || Date.now());
+  return Number.isNaN(parsed.getTime()) ? '--:--:--' : parsed.toLocaleTimeString('vi-VN');
+};
+const getAgentIcon = (name = '') => {
+  const safeName = String(name || '');
+  return safeName.includes('Bull') ? '🐂' : safeName.includes('Bear') ? '🐻' : '🤖';
+};
+const getLogClass = (log = {}) => {
+  const decision = String(log?.decision || 'HOLD');
+  return decision === 'BUY' ? 'bull-card' : decision === 'SELL' ? 'bear-card' : 'hold-card';
+};
 
 onMounted(() => {
   setTimeout(initChart, 100);
