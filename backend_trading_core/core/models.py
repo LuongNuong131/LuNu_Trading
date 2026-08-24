@@ -23,6 +23,7 @@ class RiskLimits:
     starting_capital: float = 10_000.0
     risk_per_trade: float = 0.01
     max_position_notional_pct: float = 0.25
+    max_total_exposure_pct: float = 0.60
     max_open_positions: int = 3
     max_daily_loss_pct: float = 0.03
     max_drawdown_pct: float = 0.10

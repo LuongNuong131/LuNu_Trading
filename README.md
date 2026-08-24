@@ -12,14 +12,16 @@ The repository keeps the six upstream projects as integration references rather 
 |---|---|---|
 | Market data | Read-only CCXT OHLCV adapter | Optional exchange-specific adapters |
 | Signals | Deterministic RSI, MACD histogram, ATR and sweep baseline | Strategy plugins and reproducible backtests |
-| Risk | Per-trade risk, notional cap, max positions, daily loss and drawdown gates | Portfolio-level exposure and correlated-risk checks |
+| Risk | Per-trade risk, notional cap, total portfolio exposure, max positions, daily loss and drawdown gates | Correlation-aware exposure and regime-specific limits |
 | Execution | Paper-only executor with fees and slippage | Separate, manually enabled live connector after paper validation |
 | LLM | Advisory module retained but not on the order path | Research summaries, never unvalidated order authority |
-| UI/API | Read-only local FastAPI dashboard endpoints | Authenticated monitoring and configuration UI |
+| UI/API | Read-only local FastAPI endpoints plus `/ws/snapshot` state stream and `/api/audit` | Authenticated monitoring and configuration UI |
 
 ## Safe local run
 
-Create a virtual environment, install `backend_trading_core/requirements.txt`, and copy `.env.example` to a local `.env` outside version control. The default mode remains paper-only. Start the backend with `PYTHONPATH=backend_trading_core python backend_trading_core/main.py`. The local API exposes `/health`, `/api/stats`, `/api/positions`, `/api/logs`, and `/api/trades`.
+Create a virtual environment, install `backend_trading_core/requirements.txt`, and copy `.env.example` to a local `.env` outside version control. The default mode remains paper-only. Start the backend with `PYTHONPATH=backend_trading_core python backend_trading_core/main.py`. The local API exposes `/health`, `/api/stats`, `/api/positions`, `/api/logs`, `/api/trades`, `/api/audit`, and the read-only WebSocket `/ws/snapshot`. The market feed now retries with bounded exponential backoff and recreates the exchange client after failures.
+
+For research, use `backtest.runner.run_backtest` for a single historical run and `backtest.validation.walk_forward_validate` for forward-only windows. Treat all output as research diagnostics, not a forecast.
 
 Run tests with `PYTHONPATH=backend_trading_core python -m unittest discover -s tests -v`.
 

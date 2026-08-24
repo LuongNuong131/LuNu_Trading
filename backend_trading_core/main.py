@@ -36,12 +36,17 @@ async def handle_new_bar(event: Event) -> None:
     context = get_technical_context(df_1m)
     signal = deterministic_signal(context)
     reason = f"rsi={context.get('rsi')} macd_hist={context.get('macd_hist')} atr={context.get('atr')}"
+    bar_id = str(int(bars[-1][0]))
+    db_client.insert_audit_event(f"bar:{symbol}:{bar_id}", "BAR_PROCESSED", symbol, {"bar_id": bar_id, "price": price})
     db_client.insert_ai_log("deterministic_signal", symbol, signal.value, reason)
+    db_client.insert_audit_event(f"signal:{symbol}:{bar_id}", "SIGNAL_GENERATED", symbol, {"signal": signal.value, "reason": reason})
     if signal.value == "HOLD":
         return
     intent = OrderIntent(symbol=symbol, signal=signal, price=price, atr=float(context["atr"]), reason=reason, source_bar_timestamp=int(bars[-1][0]))
     decision = executor.execute(intent)
-    db_client.insert_trade(intent.source_bar_timestamp and f"SIG-{intent.source_bar_timestamp}" or "SIG-UNKNOWN", symbol, signal.value, price, decision.amount, "APPROVED" if decision.approved else f"REJECTED:{decision.reason}", {"reason": reason})
+    status = "APPROVED" if decision.approved else f"REJECTED:{decision.reason}"
+    db_client.insert_audit_event(f"risk:{symbol}:{bar_id}", "RISK_DECISION", symbol, {"approved": decision.approved, "reason": decision.reason, "amount": decision.amount})
+    db_client.insert_trade(intent.source_bar_timestamp and f"SIG-{intent.source_bar_timestamp}" or "SIG-UNKNOWN", symbol, signal.value, price, decision.amount, status, {"reason": reason})
     log.info("%s %s approved=%s reason=%s", symbol, signal.value, decision.approved, decision.reason)
 
 

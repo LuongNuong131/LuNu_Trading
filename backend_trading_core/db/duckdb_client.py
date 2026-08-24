@@ -44,6 +44,13 @@ class DuckDBClient:
                     status TEXT NOT NULL,
                     metadata TEXT NOT NULL DEFAULT '{}'
                 );
+                CREATE TABLE IF NOT EXISTS audit_events (
+                    event_id TEXT PRIMARY KEY,
+                    timestamp TEXT NOT NULL,
+                    event_type TEXT NOT NULL,
+                    symbol TEXT,
+                    payload TEXT NOT NULL
+                );
             """)
 
     @staticmethod
@@ -57,6 +64,16 @@ class DuckDBClient:
     def insert_trade(self, order_id: str, symbol: str, side: str, price: float, amount: float, status: str, metadata: dict | None = None) -> None:
         with self._lock, self.conn:
             self.conn.execute("INSERT OR REPLACE INTO trade_history(order_id, timestamp, symbol, side, price, amount, status, metadata) VALUES (?, ?, ?, ?, ?, ?, ?, ?)", (order_id, self._now(), symbol, side, price, amount, status, json.dumps(metadata or {})))
+
+    def insert_audit_event(self, event_id: str, event_type: str, symbol: str | None, payload: dict) -> None:
+        with self._lock, self.conn:
+            self.conn.execute("INSERT OR IGNORE INTO audit_events(event_id, timestamp, event_type, symbol, payload) VALUES (?, ?, ?, ?, ?)", (event_id, self._now(), event_type, symbol, json.dumps(payload, default=str)))
+
+    def fetch_recent_audit_events(self, limit: int = 100) -> list[dict]:
+        limit = max(1, min(int(limit), 500))
+        with self._lock:
+            rows = self.conn.execute("SELECT * FROM audit_events ORDER BY timestamp DESC LIMIT ?", (limit,)).fetchall()
+        return [dict(row) for row in rows]
 
     def fetch_recent_logs(self, limit: int = 50) -> list[dict]:
         limit = max(1, min(int(limit), 500))

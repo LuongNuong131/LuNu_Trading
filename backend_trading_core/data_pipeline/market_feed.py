@@ -16,6 +16,7 @@ class MarketFeed:
         self.exchange: Any = None
         self.active = False
         self._last_bar: dict[tuple[str, str], int] = {}
+        self._failure_count = 0
 
     async def _connect(self) -> None:
         if self.exchange is not None:
@@ -30,6 +31,7 @@ class MarketFeed:
     async def fetch_once(self, symbol: str) -> None:
         await self._connect()
         results = await asyncio.gather(self.exchange.fetch_ohlcv(symbol, "1m", limit=100), self.exchange.fetch_ohlcv(symbol, "15m", limit=40))
+        self._failure_count = 0
         payload = {"symbol": symbol, "timeframe": "1m", "bars": results[0], "bars_15m": results[1]}
         bar_ts = int(results[0][-1][0]) if results[0] else 0
         key = (symbol, "1m")
@@ -45,7 +47,12 @@ class MarketFeed:
                 try:
                     await self.fetch_once(symbol)
                 except Exception as exc:
-                    event_engine.put(Event("FEED_ERROR", {"symbol": symbol, "error": str(exc)}))
+                    self._failure_count += 1
+                    event_engine.put(Event("FEED_ERROR", {"symbol": symbol, "error": str(exc), "failure_count": self._failure_count}))
+                    if self.exchange is not None:
+                        await self.exchange.close()
+                        self.exchange = None
+                    await asyncio.sleep(min(300, 2 ** min(self._failure_count, 8)))
             await asyncio.sleep(self.poll_seconds)
 
     def start(self) -> asyncio.Task:

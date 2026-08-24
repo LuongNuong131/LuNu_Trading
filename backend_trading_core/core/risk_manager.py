@@ -55,7 +55,10 @@ class RiskManager:
         if stop_distance <= 0:
             return RiskDecision(False, "invalid stop distance")
         amount = (equity * self.limits.risk_per_trade) / stop_distance
-        notional_cap = equity * self.limits.max_position_notional_pct
+        position_cap = equity * self.limits.max_position_notional_pct
+        total_exposure = sum(position.notional for position in positions.values() if position.symbol != intent.symbol)
+        portfolio_cap = max(0.0, equity * self.limits.max_total_exposure_pct - total_exposure)
+        notional_cap = min(position_cap, portfolio_cap)
         amount = min(amount, notional_cap / intent.price)
         if amount <= 0:
             return RiskDecision(False, "position size is zero")

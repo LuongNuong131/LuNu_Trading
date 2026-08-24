@@ -8,7 +8,7 @@ from core.order_executor import PaperExecutor
 from factor_zoo.technical import deterministic_signal, get_technical_context
 
 
-def run_backtest(df: pd.DataFrame, symbol: str = "BTC/USDT") -> dict:
+def run_backtest(df: pd.DataFrame, symbol: str = "BTC/USDT", evaluation_start: int = 35) -> dict:
     required = {"timestamp", "open", "high", "low", "close", "volume"}
     if not required.issubset(df.columns):
         raise ValueError(f"missing columns: {sorted(required - set(df.columns))}")
@@ -16,12 +16,15 @@ def run_backtest(df: pd.DataFrame, symbol: str = "BTC/USDT") -> dict:
         return {"trades": 0, "starting_equity": 0.0, "ending_equity": 0.0, "return_pct": 0.0, "max_drawdown_pct": 0.0}
     executor = PaperExecutor()
     equity_curve = [executor.equity]
+    evaluation_start = max(35, int(evaluation_start))
     for index in range(35, len(df)):
         history = df.iloc[:index]
         bar = df.iloc[index]
         open_price = float(bar["open"])
         close_price = float(bar["close"])
         executor.update_price(symbol, open_price)
+        if index < evaluation_start:
+            continue
         context = get_technical_context(history)
         signal = deterministic_signal(context)
         if signal.value != "HOLD":

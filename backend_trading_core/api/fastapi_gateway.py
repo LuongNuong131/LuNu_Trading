@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+import asyncio
 import os
 
-from fastapi import FastAPI, Query
+from fastapi import FastAPI, Query, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 
 from core.order_executor import executor
@@ -29,6 +30,11 @@ def get_trades(limit: int = Query(30, ge=1, le=500)) -> dict:
     return {"success": True, "data": db_client.fetch_recent_trades(limit)}
 
 
+@app.get("/api/audit")
+def get_audit(limit: int = Query(100, ge=1, le=500)) -> dict:
+    return {"success": True, "data": db_client.fetch_recent_audit_events(limit)}
+
+
 @app.get("/api/stats")
 def get_stats() -> dict:
     snapshot = executor.snapshot()
@@ -38,3 +44,15 @@ def get_stats() -> dict:
 @app.get("/api/positions")
 def get_positions() -> dict:
     return {"success": True, "data": executor.snapshot()["open_positions"]}
+
+
+@app.websocket("/ws/snapshot")
+async def snapshot_stream(websocket: WebSocket) -> None:
+    """Read-only state stream for the desktop UI; incoming messages are ignored."""
+    await websocket.accept()
+    try:
+        while True:
+            await websocket.send_json({"type": "snapshot", "data": executor.snapshot()})
+            await asyncio.sleep(2)
+    except (WebSocketDisconnect, asyncio.CancelledError):
+        return
