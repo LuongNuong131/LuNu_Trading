@@ -37,7 +37,9 @@ If you need the optional advisory LLM module, install it separately after the co
 python -m pip install -r requirements-llm.txt
 ```
 
-In PowerShell, the activation command is `..\\.venv\\Scripts\\Activate.ps1` after entering `backend_trading_core`, or simply run `..\\.venv\\Scripts\\python.exe run_backend.py`. Do not use Linux commands such as `source .venv/bin/activate` or `PYTHONPATH=... command` in Windows CMD. Before starting, update the checkout with `git pull origin master`; the old implementation created a CCXT client during import and could emit a resource warning, while the current implementation creates and closes it asynchronously.
+Do not delete `.venv` while it is the active environment. If `.venv` was deleted while the prompt still shows `(.venv)`, close that terminal, open a new CMD, and run `setup_windows.cmd` from the repository root.
+
+In PowerShell, the activation command is `..\\.venv\\Scripts\\Activate.ps1` after entering `backend_trading_core`, or simply run `..\\.venv\\Scripts\\python.exe run_backend.py`. Do not use Linux commands such as `source .venv/bin/activate` or `PYTHONPATH=... command` in Windows CMD. Before starting, update the checkout with `git pull origin master`; the old implementation created a CCXT client during import and could emit a resource warning, while the current implementation creates and closes it asynchronously. For an automated Windows setup from the repository root, run `setup_windows.cmd`; it creates `.venv`, installs dependencies with that exact interpreter, and verifies Pandas/NumPy/FastAPI/Uvicorn before startup.
 
 For research, use `backtest.runner.run_backtest` for a single historical run and `backtest.validation.walk_forward_validate` for forward-only windows. Treat all output as research diagnostics, not a forecast.
 
