@@ -19,7 +19,19 @@ The repository keeps the six upstream projects as integration references rather 
 
 ## Safe local run
 
-Create a virtual environment, install `backend_trading_core/requirements.txt`, and copy `.env.example` to a local `.env` outside version control. The default mode remains paper-only. Start the backend with `PYTHONPATH=backend_trading_core python backend_trading_core/main.py`. The local API exposes `/health`, `/api/stats`, `/api/positions`, `/api/logs`, `/api/trades`, `/api/audit`, and the read-only WebSocket `/ws/snapshot`. The market feed now retries with bounded exponential backoff and recreates the exchange client after failures.
+Create a virtual environment, install `backend_trading_core/requirements.txt`, and copy `.env.example` to a local `.env` outside version control. The default mode remains paper-only. The local API exposes `/health`, `/api/stats`, `/api/positions`, `/api/logs`, `/api/trades`, `/api/audit`, and the read-only WebSocket `/ws/snapshot`. The market feed now retries with bounded exponential backoff and recreates the exchange client after failures.
+
+### Windows CMD / PowerShell
+
+From the repository root, activate the virtual environment and run the Windows-friendly entrypoint:
+
+```bat
+.venv\\Scripts\\activate
+cd backend_trading_core
+python run_backend.py
+```
+
+In PowerShell, the activation command is `..\\.venv\\Scripts\\Activate.ps1` after entering `backend_trading_core`, or simply run `..\\.venv\\Scripts\\python.exe run_backend.py`. Do not use Linux commands such as `source .venv/bin/activate` or `PYTHONPATH=... command` in Windows CMD. Before starting, update the checkout with `git pull origin master`; the old implementation created a CCXT client during import and could emit a resource warning, while the current implementation creates and closes it asynchronously.
 
 For research, use `backtest.runner.run_backtest` for a single historical run and `backtest.validation.walk_forward_validate` for forward-only windows. Treat all output as research diagnostics, not a forecast.
 
