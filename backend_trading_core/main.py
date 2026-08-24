@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 
 import pandas as pd
 import uvicorn
@@ -53,15 +54,19 @@ async def handle_new_bar(event: Event) -> None:
 async def run() -> None:
     event_engine.register("NEW_BAR", handle_new_bar)
     event_engine.start()
-    feed_task = market_feed.start()
+    feed_enabled = os.getenv("MARKET_FEED_ENABLED", "false").strip().lower() in {"1", "true", "yes", "on"}
+    feed_task = market_feed.start() if feed_enabled else None
+    if not feed_enabled:
+        log.info("Market feed disabled; API is running in paper/dashboard mode")
     server = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=8000, log_level="warning"))
     try:
         await server.serve()
     finally:
         await market_feed.stop()
         await event_engine.stop_async()
-        feed_task.cancel()
-        await asyncio.gather(feed_task, return_exceptions=True)
+        if feed_task is not None:
+            feed_task.cancel()
+            await asyncio.gather(feed_task, return_exceptions=True)
 
 
 if __name__ == "__main__":
