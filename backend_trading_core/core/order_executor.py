@@ -17,6 +17,7 @@ class PaperExecutor:
         self.realized_pnl = 0.0
         self.positions: dict[str, Position] = {}
         self.closed_trades: list[dict] = []
+        self._latest_prices: dict[str, float] = {}
         self._lock = RLock()
 
     def _mark_value(self, position: Position, price: float) -> float:
@@ -31,12 +32,17 @@ class PaperExecutor:
     @property
     def equity(self) -> float:
         with self._lock:
-            return self.capital + sum(self._mark_value(p, p.entry_price) for p in self.positions.values())
+            marked_value = sum(
+                self._mark_value(position, self._latest_prices.get(symbol, position.entry_price))
+                for symbol, position in self.positions.items()
+            )
+            return self.capital + marked_value
 
     def update_price(self, symbol: str, current_price: float) -> list[dict]:
         if current_price <= 0:
             return []
         with self._lock:
+            self._latest_prices[symbol] = current_price
             position = self.positions.get(symbol)
             if position is None:
                 return []
@@ -71,6 +77,7 @@ class PaperExecutor:
             position = Position(intent.symbol, side, entry, amount, decision.stop_loss or 0.0, decision.take_profit or 0.0)
             self.capital -= notional + entry_fee
             self.positions[intent.symbol] = position
+            self._latest_prices[intent.symbol] = intent.price
             return RiskDecision(True, "approved", amount, decision.stop_loss, decision.take_profit, notional)
 
     def _slipped_price(self, price: float, side: Side, entering: bool) -> float:
@@ -83,6 +90,7 @@ class PaperExecutor:
     def close(self, symbol: str, price: float, reason: str) -> dict:
         with self._lock:
             position = self.positions.pop(symbol, None)
+            self._latest_prices.pop(symbol, None)
             if position is None:
                 return {"status": "NOOP", "symbol": symbol, "reason": "not_open"}
             exit_price = self._slipped_price(price, position.side, entering=False)
@@ -93,13 +101,39 @@ class PaperExecutor:
             pnl = gross - entry_fee - exit_fee
             self.capital += proceeds - exit_fee
             self.realized_pnl += pnl
-            trade = {"order_id": uuid.uuid4().hex[:12].upper(), "symbol": symbol, "side": position.side.value, "entry_price": position.entry_price, "exit_price": exit_price, "amount": position.amount, "pnl": pnl, "reason": reason, "status": "CLOSED"}
+            trade = {
+                "order_id": uuid.uuid4().hex[:12].upper(),
+                "symbol": symbol,
+                "side": position.side.value,
+                "entry_price": position.entry_price,
+                "exit_price": exit_price,
+                "amount": position.amount,
+                "pnl": pnl,
+                "reason": reason,
+                "status": "CLOSED",
+            }
             self.closed_trades.append(trade)
             return trade
 
     def snapshot(self) -> dict:
         with self._lock:
-            return {"mode": "paper", "capital": self.capital, "equity": self.equity, "realized_pnl": self.realized_pnl, "open_positions": [asdict(p) for p in self.positions.values()], "closed_trades": self.closed_trades[-50:]}
+            open_positions = []
+            for symbol, position in self.positions.items():
+                item = asdict(position)
+                current_price = self._latest_prices.get(symbol, position.entry_price)
+                item["current_price"] = current_price
+                item["unrealized_pnl"] = self._unrealized(position, current_price)
+                open_positions.append(item)
+            equity = self.equity
+            return {
+                "mode": "paper",
+                "capital": self.capital,
+                "equity": equity,
+                "realized_pnl": self.realized_pnl,
+                "unrealized_pnl": equity - self.capital - sum(position.notional for position in self.positions.values()),
+                "open_positions": open_positions,
+                "closed_trades": self.closed_trades[-50:],
+            }
 
 
 executor = PaperExecutor()

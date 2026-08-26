@@ -2,14 +2,15 @@
 from __future__ import annotations
 
 import json
-import os
 import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
 from threading import RLock
 
+from config import settings
 
-DB_PATH = Path(os.getenv("OMNI_QUANT_DB_PATH", Path(__file__).with_name("omni_quant.sqlite3")))
+
+DB_PATH = settings.db_path
 
 
 class DuckDBClient:
@@ -90,5 +91,4 @@ class DuckDBClient:
         return [dict(row) for row in rows]
 
 
-_db_path = os.getenv("OMNI_QUANT_DB_PATH", str(DB_PATH))
-db_client = DuckDBClient(_db_path)
+db_client = DuckDBClient(DB_PATH)

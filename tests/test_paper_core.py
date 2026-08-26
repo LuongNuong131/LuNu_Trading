@@ -32,6 +32,16 @@ class PaperCoreTests(unittest.TestCase):
         self.assertLess(closed[0]["pnl"], 0)
         self.assertEqual(executor.update_price("BTC/USDT", position.stop_loss), [])
 
+    def test_equity_marks_open_position_to_latest_price(self):
+        executor = PaperExecutor(RiskLimits(starting_capital=10_000, max_position_notional_pct=0.25))
+        executor.execute(OrderIntent("BTC/USDT", Signal.BUY, 100.0, 1.0, "test"))
+        initial_equity = executor.equity
+        executor.update_price("BTC/USDT", 102.0)
+        self.assertGreater(executor.equity, initial_equity)
+        snapshot = executor.snapshot()
+        self.assertEqual(snapshot["open_positions"][0]["current_price"], 102.0)
+        self.assertGreater(snapshot["open_positions"][0]["unrealized_pnl"], 0.0)
+
     def test_invalid_context_fails_closed(self):
         context = get_technical_context(None)
         self.assertFalse(context["ready"])
