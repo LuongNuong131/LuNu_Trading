@@ -45,7 +45,7 @@ Mở dashboard từ cửa sổ PowerShell thứ hai:
 Start-Process 'http://127.0.0.1:8000/dashboard'
 ```
 
-Dùng F5 để cập nhật báo cáo. Bấm Ctrl+C trong cửa sổ chạy backend để dừng. Paper gọi CCXT công khai, bỏ nến đang chạy, tính tín hiệu ở nến trước và dùng giá đóng nến đã hoàn tất kế tiếp quan sát được lúc poll làm giá tham chiếu fill mô phỏng. Dữ liệu mất nến, trùng, sai thứ tự, OHLCV lỗi, nguồn lỗi và dữ liệu quá cũ hiển thị trên watchlist. Giá cũ của vị thế hiện có giữ nguyên giá đánh dấu cuối cùng và chặn mở thêm long trong cùng tài khoản đến khi feed cập nhật. Mỗi đồng tiền theo dõi riêng và các symbol dùng chung giới hạn theo quote currency. Feed lỗi không tự chuyển sang fixture.
+Dashboard paper tự cập nhật mỗi 15 giây khi tab đang mở. Nút **Làm mới** kiểm tra ngay, giữ bộ lọc và dòng đang mở. Biểu đồ vốn chủ dùng vốn ghi nhận sau các lần khớp mô phỏng và ảnh chụp hiện tại. Bấm Ctrl+C trong cửa sổ chạy backend để dừng. Paper gọi CCXT công khai, bỏ nến đang chạy, tính tín hiệu ở nến trước và dùng giá đóng nến đã hoàn tất kế tiếp quan sát được lúc poll làm giá tham chiếu fill mô phỏng. Dữ liệu mất nến, trùng, sai thứ tự, OHLCV lỗi, nguồn lỗi và dữ liệu quá cũ hiển thị trên watchlist. Giá cũ của vị thế hiện có giữ nguyên giá đánh dấu cuối cùng và chặn mở thêm long trong cùng tài khoản đến khi feed cập nhật. Mỗi đồng tiền theo dõi riêng và các symbol dùng chung giới hạn theo quote currency. Feed lỗi không tự chuyển sang fixture.
 
 ### Ví paper 10–50 USD và quét nhiều coin
 

@@ -60,7 +60,7 @@ def get_snapshot() -> dict:
 
 @app.get("/dashboard", response_class=HTMLResponse)
 def dashboard() -> str:
-    return render_report(runtime.snapshot(include_signals=True))
+    return render_report(runtime.snapshot(include_signals=True), live=True)
 
 
 @app.websocket("/ws/snapshot")
