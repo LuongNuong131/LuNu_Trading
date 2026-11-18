@@ -94,7 +94,7 @@ class PaperExecutor:
         if not row:
             return
         state = json.loads(row[0])
-        if state["limits"] != asdict(self.limits):
+        if RiskLimits(**state["limits"]) != self.limits:
             raise ValueError("paper account limits changed; select a new paper database")
         self.capital, self.fees, self.realized_pnl = state["capital"], state["fees"], state["realized_pnl"]
         self.positions = {
@@ -147,7 +147,8 @@ class PaperExecutor:
             self.killed = active
 
     def update_price(self, symbol: str, current_price: float, *, now: datetime | None = None,
-                     instrument: Instrument | None = None, trigger_exits: bool = True, data_status: str = "ready") -> list[dict]:
+                     instrument: Instrument | None = None, trigger_exits: bool = True,
+                     data_status: str = "ready", spread_bps: float | None = None) -> list[dict]:
         if not isfinite(current_price) or current_price <= 0 or data_status != "ready":
             return []
         now = now or utc_now()
@@ -163,7 +164,7 @@ class PaperExecutor:
         elif current_price >= position.take_profit:
             reason = "TAKE_PROFIT"
         if reason:
-            trade = self.close(symbol, current_price, reason, now=now, instrument=instrument)
+            trade = self.close(symbol, current_price, reason, now=now, instrument=instrument, spread_bps=spread_bps)
             return [trade] if trade["status"] == "CLOSED" else []
         return []
 
@@ -177,7 +178,9 @@ class PaperExecutor:
         with self._transaction():
             if client_id in self.orders:
                 return RiskDecision(**self.orders[client_id]["decision"])
-            adjustment = (self.limits.slippage_bps + self.limits.spread_bps / 2) / 10_000
+            adjustment = self.risk.one_way_adjustment(intent.spread_bps)
+            if intent.spread_bps is not None and (not isfinite(intent.spread_bps) or intent.spread_bps < 0):
+                adjustment = float("nan")
             buy = intent.signal is Signal.BUY
             price = intent.price * (1 + adjustment if buy else 1 - adjustment)
             instrument = intent.instrument
@@ -204,6 +207,7 @@ class PaperExecutor:
                 "evidence": intent.evidence,
                 "decision": asdict(decision), "amount": decision.amount,
                 "price": price if isfinite(price) else None, "fee_rate": self.limits.fee_rate,
+                "mark_price": intent.price if intent.spread_bps is not None and isfinite(intent.price) else None,
                 "status": "PENDING_SUBMIT" if decision.approved else "RISK_REJECTED",
                 "filled": 0.0, "fills": {}, "currency": self.currency,
                 "account_before": self._balance(),
@@ -295,6 +299,7 @@ class PaperExecutor:
         if order["side"] == "BUY":
             self.capital -= gross + fill.fee
             if position is None:
+                self.marks.setdefault(symbol, order.get("mark_price") or fill.price)
                 self.positions[symbol] = Position(
                     symbol, Side.BUY, fill.price, fill.amount, order["decision"]["stop_loss"],
                     order["decision"]["take_profit"], datetime.fromisoformat(order["created_at"]), fill.fee,
@@ -316,7 +321,7 @@ class PaperExecutor:
             self.closed_trades.append(trade)
             if position.amount <= max(1e-14, fill.amount * 1e-12):
                 del self.positions[symbol]
-        self.marks.setdefault(symbol, fill.price)
+                self.marks.pop(symbol, None)
         self.risk.mark(self.equity, datetime.fromisoformat(order["created_at"]))
         order["fills"][fill.fill_id] = {
             **asdict(fill), "realized_pnl": pnl, "cash_delta": (-gross if order["side"] == "BUY" else gross) - fill.fee,
@@ -325,11 +330,11 @@ class PaperExecutor:
         }
 
     def close(self, symbol: str, price: float, reason: str, *, now: datetime | None = None,
-              instrument: Instrument | None = None) -> dict:
+              instrument: Instrument | None = None, spread_bps: float | None = None) -> dict:
         now = now or utc_now()
         decision = self.execute(OrderIntent(symbol, Signal.SELL, price, 0.0, reason, now,
                                             instrument=instrument,
-                                            signal_id=f"{symbol}:{now.isoformat()}:{reason}"))
+                                            signal_id=f"{symbol}:{now.isoformat()}:{reason}", spread_bps=spread_bps))
         if decision.approved and self.closed_trades and self.closed_trades[-1]["order_id"] == decision.client_order_id:
             return self.closed_trades[-1]
         return {"status": "NOOP", "symbol": symbol, "reason": decision.reason}
@@ -347,5 +352,6 @@ class PaperExecutor:
             if self._db is not None:
                 self._restore()
             return as_dict({"mode": "paper", "currency": self.currency, **self._balance(),
+                            "risk_limits": asdict(self.limits),
                             "kill_switch": self.killed, "open_positions": [asdict(p) for p in self.positions.values()],
                             "closed_trades": self.closed_trades[-50:], "orders": list(self.orders.values())})

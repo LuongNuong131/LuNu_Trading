@@ -19,6 +19,17 @@ def table(headers, rows) -> str:
 
 
 def render_report(snapshot: dict) -> str:
+    scanner = snapshot.get("scanner")
+    scan_header = ""
+    if scanner:
+        fields = ("universe", "quoted", "eligible", "attempted", "completed", "processed", "buy_signals", "eligible_buys")
+        scan_stats = table(("Cặp spot", "Có báo giá", "Qua lọc", "Đã hỏi nến", "Có nến hợp lệ",
+                            "Nến mới đã xét", "Tín hiệu BUY", "BUY qua lọc chi phí"),
+                           [[scanner.get(key) for key in fields]])
+        excluded = ", ".join(f"{reason} ({count})" for reason, count in scanner.get("excluded", {}).items())
+        scan_header = (f"<section><h2>Quét spot · {text(scanner['quote'])}</h2>"
+                       f"<p>{text(scanner['status'])} · {text(scanner.get('observed_at'))} · {text(scanner.get('error'))}</p>"
+                       f"{scan_stats}<p>{text(excluded)}</p></section>")
     watchlist = []
     signals = {}
     for event in snapshot.get("signals", []):
@@ -26,12 +37,16 @@ def render_report(snapshot: dict) -> str:
     for item in snapshot["watchlist"]:
         event = item.get("event") or {}
         indicators = event.get("indicators", {})
+        checks = event.get("scanner", {})
+        scan_columns = (checks.get("spread_bps"), checks.get("quote_volume"), checks.get("venue_minimum"),
+                        checks.get("round_trip_cost_bps"), checks.get("entry_block_reason")) if scanner else ()
         watchlist.append((item["symbol"], item["source"], item["status"], item.get("observed_at"),
                           event.get("closed_at"), event.get("timeframe"), event.get("signal"),
                           indicators.get("rsi"), indicators.get("macd_hist"), indicators.get("atr"),
-                          event.get("reason"), item.get("error")))
+                          event.get("reason"), *scan_columns, item.get("error")))
+    scan_headers = ("Spread (bps)", "Khối lượng 24h", "Lệnh tối thiểu", "Chi phí hai chiều (bps)", "Bộ lọc BUY") if scanner else ()
     overview = table(("Mã · thị trường", "Nguồn", "Feed", "Quan sát UTC", "Nến tín hiệu UTC", "Khung",
-                      "Tín hiệu", "RSI", "MACD hist.", "ATR", "Lý do", "Lỗi"), watchlist)
+                      "Tín hiệu", "RSI", "MACD hist.", "ATR", "Lý do", *scan_headers, "Lỗi"), watchlist)
     accounts = []
     audit = []
     for account in snapshot["accounts"]:
@@ -43,7 +58,16 @@ def render_report(snapshot: dict) -> str:
                           [(p["symbol"], p["amount"], p["entry_price"], p["stop_loss"], p["take_profit"])
                            for p in account["open_positions"]]) if account["open_positions"] else "<p>Không có vị thế mở.</p>"
         kill = "Bật" if account["kill_switch"] else "Tắt"
-        accounts.append(f"<article><h3>{text(currency)}</h3><p>Kill switch · {kill}</p>{stats}{positions}</article>")
+        limits = account.get("risk_limits", {})
+        profile = ""
+        if limits.get("include_costs_in_risk"):
+            profile = table(("Vốn ban đầu", "Vị thế tối đa", "Giá trị mỗi vị thế (%)", "Rủi ro ước tính mỗi lệnh (%)",
+                             "Ngưỡng lỗ ngày (%)", "Ngưỡng drawdown (%)", "Phí mỗi chiều (bps)"),
+                            [(limits["starting_capital"], limits["max_open_positions"],
+                              100 * limits["max_position_notional_pct"], 100 * limits["risk_per_trade"],
+                              100 * limits["max_daily_loss_pct"], 100 * limits["max_drawdown_pct"],
+                              10_000 * limits["fee_rate"])])
+        accounts.append(f"<article><h3>{text(currency)}</h3><p>Kill switch · {kill}</p>{stats}{profile}{positions}</article>")
         for order in reversed(account["orders"]):
             event = order.get("evidence") or signals.get(order["signal_id"], {})
             indicators = event.get("indicators", {})
@@ -57,9 +81,10 @@ def render_report(snapshot: dict) -> str:
                                  [(indicators.get(key) for key in ("rsi", "macd_hist", "atr", "ema26",
                                   "prior_10_high", "prior_10_low", "liquidity_sweep_bullish", "liquidity_sweep_bearish"))])
             decision = order["decision"]
-            risk = table(("Thời điểm UTC", "Risk", "Trạng thái lệnh", "Giá dự kiến", "Khối lượng", "Tiền trước lệnh", "Sàn mô phỏng"),
-                         [(order["created_at"], decision["reason"], order["status"], order["price"],
-                           order["amount"], order["account_before"]["capital"], order.get("broker_reason") or "—")])
+            risk = table(("Thời điểm UTC", "Risk", "Trạng thái lệnh", "Giá dự kiến", "Khối lượng",
+                          "Lỗ ước tính tại stop", "Tiền trước lệnh", "Sàn mô phỏng"),
+                         [(order["created_at"], decision["reason"], order["status"], order["price"], order["amount"],
+                           decision.get("estimated_stop_loss"), order["account_before"]["capital"], order.get("broker_reason"))])
             fills = table(("Fill ID", "Giá", "SL", "Phí", "Δ tiền", "Δ vị thế", "P&L đã chốt", "Tiền sau fill", "Vốn sau fill"),
                           [(f["fill_id"], f["price"], f["amount"], f["fee"], f["cash_delta"], f["position_delta"],
                             f["realized_pnl"], f["account_after"]["capital"], f["account_after"]["equity"])
@@ -95,6 +120,7 @@ th,td {{text-align:left; padding:.6rem; border-bottom:1px solid #344761}} th,b {
 summary {{cursor:pointer; padding:.65rem 0; overflow-wrap:anywhere}} details+details {{border-top:1px solid #344761}}
 </style></head><body>
 <header><h1>LuNu Trading</h1><p>{text(snapshot['mode'])} · {text(snapshot['source_note'])}</p></header>
+{scan_header}
 <section><h2>Watchlist</h2>{overview}</section>
 <section><h2>Tài khoản paper</h2>{''.join(accounts)}</section>
 <section><h2>Truy vết tín hiệu, rủi ro và fill</h2>{''.join(audit) or '<p>Chưa có lệnh.</p>'}</section>

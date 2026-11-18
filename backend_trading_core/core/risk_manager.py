@@ -45,6 +45,14 @@ class RiskManager:
         peak = self.state.high_water_mark
         return max(0.0, 1 - equity / peak) if peak else 0.0
 
+    def stop_distance(self, price: float, atr: float) -> float:
+        return min(max(atr * 1.5, price * self.limits.min_stop_distance_pct),
+                   price * self.limits.max_stop_distance_pct)
+
+    def one_way_adjustment(self, spread_bps: float | None) -> float:
+        spread = self.limits.spread_bps if spread_bps is None else spread_bps
+        return (self.limits.slippage_bps + spread / 2) / 10_000
+
     def evaluate(
         self, intent: OrderIntent, equity: float, positions: dict[str, Position], now: datetime,
         *, price: float, cash: float, exposure: float, pending: set[str], killed: bool,
@@ -72,6 +80,10 @@ class RiskManager:
                                 notional=existing.amount * price)
         if killed:
             return RiskDecision(False, "kill switch active")
+        if intent.entry_block_reason:
+            return RiskDecision(False, intent.entry_block_reason)
+        if self.limits.include_costs_in_risk and intent.spread_bps is None:
+            return RiskDecision(False, "fresh bid/ask required for micro entries")
         if existing:
             return RiskDecision(False, "same-side position already open")
         if not isfinite(intent.atr) or intent.atr <= 0:
@@ -86,8 +98,7 @@ class RiskManager:
         if self.drawdown(equity) >= self.limits.max_drawdown_pct:
             return RiskDecision(False, "maximum drawdown limit reached")
 
-        stop = min(max(intent.atr * 1.5, price * self.limits.min_stop_distance_pct),
-                   price * self.limits.max_stop_distance_pct)
+        stop = self.stop_distance(price, intent.atr)
         if stop <= 0:
             return RiskDecision(False, "invalid stop distance")
         budget = min(equity * self.limits.max_position_notional_pct,
@@ -96,9 +107,16 @@ class RiskManager:
             return RiskDecision(False, "portfolio exposure limit reached")
         if cash <= 0:
             return RiskDecision(False, "insufficient free cash")
-        amount = min(equity * self.limits.risk_per_trade / stop, budget / price,
-                     cash / (price * (1 + self.limits.fee_rate)))
         instrument = intent.instrument
+        stop_price = price - stop
+        stop_fill_price = stop_price * (1 - self.one_way_adjustment(intent.spread_bps))
+        if instrument:
+            stop_fill_price = quantize(stop_fill_price, instrument.tick)
+        fee_rate = self.limits.fee_rate
+        stop_loss_per_unit = price - stop_fill_price + (price + stop_fill_price) * fee_rate
+        risk_per_unit = stop_loss_per_unit if self.limits.include_costs_in_risk else stop
+        amount = min(equity * self.limits.risk_per_trade / risk_per_unit, budget / price,
+                     cash / (price * (1 + fee_rate)))
         if instrument:
             amount = quantize(amount, instrument.lot)
             if amount <= 0 or amount < instrument.minimum_amount:
@@ -107,5 +125,6 @@ class RiskManager:
                 return RiskDecision(False, "size below minimum notional")
         if amount <= 0:
             return RiskDecision(False, "position size is zero")
-        return RiskDecision(True, "approved to open a cash long", amount, price - stop,
-                            price + 2 * stop, amount * price)
+        return RiskDecision(True, "approved to open a cash long", amount, stop_price,
+                            price + 2 * stop, amount * price,
+                            estimated_stop_loss=amount * stop_loss_per_unit)

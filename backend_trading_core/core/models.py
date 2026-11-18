@@ -33,6 +33,7 @@ class RiskLimits:
     min_stop_distance_pct: float = 0.002
     max_stop_distance_pct: float = 0.05
     spread_bps: float = 0.0
+    include_costs_in_risk: bool = False
 
 
 @dataclass
@@ -91,6 +92,8 @@ class OrderIntent:
     max_age_seconds: float | None = None
     data_status: str = "ready"
     evidence: dict | None = None
+    spread_bps: float | None = None
+    entry_block_reason: str | None = None
 
 
 @dataclass(frozen=True)
@@ -102,6 +105,7 @@ class RiskDecision:
     take_profit: float | None = None
     notional: float = 0.0
     client_order_id: str | None = None
+    estimated_stop_loss: float | None = None
 
 
 def utc_now() -> datetime:

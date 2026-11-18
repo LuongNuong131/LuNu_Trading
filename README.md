@@ -43,6 +43,25 @@ Start-Process 'http://127.0.0.1:8000/dashboard'
 
 Dùng F5 để cập nhật báo cáo. Bấm Ctrl+C trong cửa sổ chạy backend để dừng. Paper gọi CCXT công khai, bỏ nến đang chạy, tính tín hiệu ở nến trước và dùng giá đóng nến đã hoàn tất kế tiếp quan sát được lúc poll làm giá tham chiếu fill mô phỏng. Dữ liệu mất nến, trùng, sai thứ tự, OHLCV lỗi, nguồn lỗi và dữ liệu quá cũ hiển thị trên watchlist. Giá cũ của vị thế hiện có giữ nguyên giá đánh dấu cuối cùng và chặn mở thêm long trong cùng tài khoản đến khi feed cập nhật. Mỗi đồng tiền theo dõi riêng và các symbol dùng chung giới hạn theo quote currency. Feed lỗi không tự chuyển sang fixture.
 
+### Ví paper 10–50 USD và quét nhiều coin
+
+Ví dụ PowerShell với vốn paper 25 USD. Dùng thư mục repo và chạy sau bước cài đặt ở trên.
+
+```powershell
+$env:PAPER_MICRO_CAPITAL = '25'
+$env:MARKET_SCAN_QUOTE = 'USD'
+$env:MARKET_EXCHANGE = 'kraken'
+$env:MARKET_FEED_ENABLED = 'true'
+$env:OMNI_QUANT_DB_PATH = '.\data\micro-kraken-usd-25.sqlite3'
+.\.venv\Scripts\python.exe backend_trading_core\run_backend.py
+```
+
+Mở `http://127.0.0.1:8000/dashboard` và dùng F5 để cập nhật. Chọn một file SQLite riêng cho mỗi cấu hình vốn, đồng tiền, sàn và phí. Có thể đặt `MARKET_SCAN_QUOTE=USDT` hoặc `USDC` nếu sàn có thị trường spot phù hợp. Khi bật máy quét, số lượng cặp được xác định từ metadata công khai của sàn.
+
+- Bộ quét đọc báo giá hàng loạt, dùng ngưỡng thanh khoản 24h mặc định 250.000 đơn vị quote và spread tối đa 30 bps. Nó xoay vòng tối đa 20 cặp mỗi đợt để lấy nến, ưu tiên vị thế và lệnh đang mở. `MARKET_SCAN_BATCH_SIZE` có thể tăng tới 60, với giới hạn thời gian và rate limit của sàn. Báo cáo tách số cặp trong danh sách, số vượt bộ lọc, số đã gọi nến và số thực tế xử lý được.
+- Tín hiệu mua trong cùng đợt được xét theo tỷ lệ biên chốt lời mô hình trên chi phí dự kiến, sau đó theo thanh khoản. Giá paper tham chiếu điểm giữa bid/ask còn mới, cộng spread và slippage khi khớp. Tín hiệu có tỷ lệ dưới 3×, dữ liệu nến thiếu, báo giá cũ hoặc size sau làm tròn thấp hơn mức của sàn sẽ không mở vị thế. Trường hợp thiếu báo giá bid/ask, vị thế đang có vẫn được quản lý trên nến hợp lệ với spread giả định. Tỷ lệ 3× là bộ lọc chi phí, không đo xác suất lời.
+- Hồ sơ vốn nhỏ mặc định tối đa một vị thế và 60% vốn phân bổ. Sizing giới hạn lỗ **ước tính tại giá stop** khoảng 1% vốn, đã tính phí và khớp giá giả định. Lỗ ngày 2% theo UTC hoặc drawdown 5% chặn lệnh mở mới. Mặc định mô phỏng taker 40 bps cộng slippage 10 bps mỗi chiều. Nếu chọn sàn khác, đặt `PAPER_TAKER_FEE_BPS` theo biểu phí phù hợp. Gap giá, mất thanh khoản và mất feed có thể làm lỗ thực tế cao hơn ngưỡng mô hình. Khi vốn hoặc thanh khoản thấp, bộ quét có thể chỉ quan sát và giữ tiền mặt.
+
 Sổ paper lưu SQLite tại `OMNI_QUANT_DB_PATH`. Dùng một tiến trình runner cho mỗi file. File cũ giữ các bảng logs/trades/audit. Số dư của phiên bản trước nằm trong bộ nhớ, vì vậy sổ bền vững mới bắt đầu với vốn ban đầu. Đặt `PAPER_KILL_SWITCH=true` rồi khởi động lại để lưu trạng thái chặn mua. Đặt `false` để gỡ. Bỏ biến sẽ giữ trạng thái đã lưu. Hủy lệnh và đóng long có giá hợp lệ vẫn được phép khi kill switch hoặc giới hạn lỗ đang chặn lệnh mua. Với giá stale, lệnh đóng theo tín hiệu cũng bị chặn. Lệnh chờ đối soát tiếp tục giữ phần tiền/khối lượng liên quan. Nếu broker giả lập không tìm thấy lệnh theo client ID, sổ giữ trạng thái chờ và không gửi lại.
 
 ### API loopback
