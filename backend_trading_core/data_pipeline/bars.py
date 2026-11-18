@@ -4,6 +4,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from functools import lru_cache
 from pathlib import Path
+from zipfile import ZipFile
 
 import numpy as np
 import pandas as pd
@@ -11,6 +12,7 @@ import pandas as pd
 from core.models import Instrument
 
 COLUMNS = ["timestamp", "open", "high", "low", "close", "volume"]
+CRYPTO_INTERVAL_MS = {"1m": 60_000, "5m": 300_000, "15m": 900_000, "1h": 3_600_000}
 CSV_COLUMNS = ["session", "closed_at_utc", "open", "high", "low", "close", "volume"]
 REPLAY_CRYPTO = Instrument("BTC/USDT", "DEMO-SPOT", "USDT", "crypto spot", "1m", 0.01, 0.000001, 0.000001, 10)
 REPLAY_EQUITY = Instrument("DEMO", "XNYS", "USD", "equity cash", "1d", 0.01, 1, 1)
@@ -51,15 +53,45 @@ def validate_ohlcv(frame: pd.DataFrame, *, interval_ms: int | None = None) -> pd
     return frame.reset_index(drop=True)
 
 
-def finalized_crypto(rows: list, now: datetime) -> pd.DataFrame:
-    frame = validate_ohlcv(pd.DataFrame(rows, columns=COLUMNS), interval_ms=60_000)
+def finalized_crypto(rows: list, now: datetime, timeframe: str = "1m") -> pd.DataFrame:
+    interval = CRYPTO_INTERVAL_MS[timeframe]
+    frame = validate_ohlcv(pd.DataFrame(rows, columns=COLUMNS), interval_ms=interval)
     now_ms = int(now.timestamp() * 1000)
     if frame["timestamp"].iloc[-1] > now_ms:
         raise ValueError("OHLCV includes a future bar")
-    frame = frame.loc[frame["timestamp"] + 60_000 <= now_ms].copy()
+    frame = frame.loc[frame["timestamp"] + interval <= now_ms].copy()
     if frame.empty:
         raise ValueError("no finalized OHLCV bars")
-    frame["closed_ms"] = frame["timestamp"] + 60_000
+    frame["closed_ms"] = frame["timestamp"] + interval
+    return frame
+
+
+def read_crypto_history(path: Path, timeframe: str) -> pd.DataFrame:
+    """Import contiguous crypto candles from a canonical CSV or Binance spot archive."""
+    if path.suffix.lower() == ".zip":
+        with ZipFile(path) as archive:
+            entries = [name for name in archive.namelist() if name.lower().endswith(".csv")]
+            if len(entries) != 1:
+                raise ValueError("the Binance archive must contain exactly one kline CSV")
+            with archive.open(entries[0]) as stream:
+                table = pd.read_csv(stream, header=None)
+        if table.shape[1] != 12:
+            raise ValueError("expected the Binance public spot kline schema")
+        raw = table.iloc[:, :6].copy()
+        raw.columns = COLUMNS
+        stamp = pd.to_numeric(raw["timestamp"], errors="raise")
+        if (stamp >= 10**15).all():
+            if (stamp % 1_000 != 0).any():
+                raise ValueError("Binance microsecond opens must be aligned to milliseconds")
+            raw["timestamp"] = stamp // 1_000
+    else:
+        raw = pd.read_csv(path)
+        if list(raw.columns) != COLUMNS:
+            raise ValueError(f"expected CSV columns in order: {','.join(COLUMNS)}")
+    frame = validate_ohlcv(raw, interval_ms=CRYPTO_INTERVAL_MS[timeframe])
+    frame["closed_ms"] = frame["timestamp"] + CRYPTO_INTERVAL_MS[timeframe]
+    if int(frame["closed_ms"].iloc[-1]) > int(datetime.now(timezone.utc).timestamp() * 1_000):
+        raise ValueError("crypto CSV contains an unfinished bar")
     return frame
 
 

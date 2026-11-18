@@ -13,8 +13,9 @@ from core.models import Signal, utc_now
 from core.order_executor import OPEN, PaperExecutor
 from core.pipeline import WARMUP_BARS, prepare_bar, process_bar
 from core.risk_manager import quantize
-from data_pipeline.bars import utc_ms
+from data_pipeline.bars import CRYPTO_INTERVAL_MS, utc_ms
 from db.duckdb_client import DuckDBClient
+from factor_zoo.strategies import BASELINE, PAPER_STRATEGIES
 
 log = logging.getLogger(__name__)
 
@@ -27,9 +28,16 @@ class PaperRuntime:
         self.scan: dict | None = None
         self.micro_quote, self.micro_limits = limits_from_env()
         self.source = "CCXT public OHLCV"
-        self.max_age = int(os.getenv("MARKET_MAX_AGE_SECONDS", "180"))
-        if self.max_age < 60:
-            raise ValueError("MARKET_MAX_AGE_SECONDS must be at least 60 for 1m bars")
+        self.strategy = os.getenv("PAPER_STRATEGY", BASELINE).strip()
+        if self.strategy not in PAPER_STRATEGIES:
+            raise ValueError(f"PAPER_STRATEGY must be one of {', '.join(PAPER_STRATEGIES)}")
+        timeframe = os.getenv("MARKET_TIMEFRAME", "1m").strip()
+        if timeframe not in CRYPTO_INTERVAL_MS:
+            raise ValueError(f"unsupported MARKET_TIMEFRAME: {timeframe}")
+        interval = CRYPTO_INTERVAL_MS[timeframe] // 1_000
+        self.max_age = int(os.getenv("MARKET_MAX_AGE_SECONDS", str(2 * interval + 60)))
+        if self.max_age <= interval:
+            raise ValueError("MARKET_MAX_AGE_SECONDS must exceed one candle interval")
         self.kill_override = os.getenv("PAPER_KILL_SWITCH")
         self.mode = "Paper dashboard · feed tắt"
         self._lock = RLock()
@@ -95,19 +103,20 @@ class PaperRuntime:
             return None
         last = watch.get("event") or self.db.latest_signal(key)
         quote_close = utc_ms(bars["closed_ms"].iloc[-1]).isoformat()
-        if last and quote_close <= last["quote_closed_at"]:
+        if last and last.get("timeframe") == instrument.timeframe and quote_close <= last["quote_closed_at"]:
             if quote_close < last["quote_closed_at"]:
                 watch.update(status="stale", event=last, error="feed timestamp went backwards")
             else:
                 watch.update(status=last["data_status"], event=last)
             return None
-        return prepare_bar(bars, instrument, self.source, paper_now=now, max_age_seconds=self.max_age)
+        return prepare_bar(bars, instrument, self.source, strategy=self.strategy,
+                           paper_now=now, max_age_seconds=self.max_age)
 
     def _process(self, instrument, bars, now, account, signal, **scan_options) -> None:
         key = instrument.key
         other_quotes_fresh = all(self._status(self.watchlist.get(held, {}), now) == "ready"
                                  for held in account.positions if held != key)
-        signal = process_bar(bars, instrument, account, self.source, paper_now=now,
+        signal = process_bar(bars, instrument, account, self.source, strategy=self.strategy, paper_now=now,
                              max_age_seconds=self.max_age, other_quotes_fresh=other_quotes_fresh,
                              prepared=signal, **scan_options)
         self.watchlist[key].update(status=signal["data_status"], event=signal)
@@ -135,10 +144,11 @@ class PaperRuntime:
         price = quote.mid if fresh else signal["quote"]
         executable = quantize(price * (1 + account.risk.one_way_adjustment(spread)), instrument.tick, up=True)
         venue_min = max(instrument.minimum_notional, instrument.minimum_amount * executable)
-        stop = account.risk.stop_distance(executable, signal["indicators"].get("atr", 0.0))
+        stop = account.risk.stop_distance(executable, signal["indicators"].get("atr", 0.0),
+                                          signal.get("structural_stop"))
         cost_bps = 2 * account.limits.fee_rate * 10_000 + spread + 2 * account.limits.slippage_bps
         cost_bps += 20_000 * instrument.tick / price
-        ratio = 20_000 * stop / price / cost_bps if cost_bps else 0.0
+        ratio = 20_000 * stop / price / cost_bps if stop is not None and cost_bps else 0.0
         blocked = None
         if not fresh:
             blocked = "fresh bid/ask required for scanner entries"
@@ -148,6 +158,8 @@ class PaperRuntime:
             blocked = "spread above scanner ceiling"
         elif venue_min <= 0:
             blocked = "venue minimum order metadata unavailable"
+        elif stop is None or (signal.get("structural_stop") is not None and price <= signal["structural_stop"]):
+            blocked = "structural stop invalid or wider than the risk cap"
         elif ratio < settings.min_target_cost_ratio:
             blocked = "modeled target too small versus round-trip costs"
         return {"reference": "ticker midpoint" if fresh else "finalized close with fallback spread",
@@ -214,7 +226,7 @@ class PaperRuntime:
             accounts = sorted(self.accounts.values(), key=lambda account: account.currency)
             if not accounts:
                 accounts = [self.account(self.micro_quote or "USDT")]
-            result = {"mode": self.mode, "source_note": "Spot long-only · SQLite local · mỗi đồng tiền một sổ",
+            result = {"mode": self.mode, "strategy": self.strategy, "source_note": "Spot long-only · SQLite local · mỗi đồng tiền một sổ",
                       "accounts": [account.snapshot() for account in accounts], "watchlist": watches}
             if self.scan is not None:
                 result["scanner"] = self.scan.copy()
@@ -229,4 +241,4 @@ class PaperRuntime:
         accounts = result["accounts"]
         primary = next((account for account in accounts if account["currency"] == "USDT"), accounts[0])
         return {**primary, "accounts": accounts, "watchlist": result["watchlist"],
-                "paper_mode": result["mode"], **({"scanner": result["scanner"]} if "scanner" in result else {})}
+                "paper_mode": result["mode"], "strategy": self.strategy, **({"scanner": result["scanner"]} if "scanner" in result else {})}

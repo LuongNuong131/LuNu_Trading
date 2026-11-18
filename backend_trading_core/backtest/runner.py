@@ -6,7 +6,7 @@ import pandas as pd
 from core.models import Instrument, RiskLimits
 from core.order_executor import PaperExecutor
 from core.pipeline import BASELINE, BENCHMARK, WARMUP_BARS, process_bar
-from data_pipeline.bars import utc_ms, validate_ohlcv
+from data_pipeline.bars import CRYPTO_INTERVAL_MS, utc_ms, validate_ohlcv
 
 
 def run_backtest(df: pd.DataFrame, symbol: str = "BTC/USDT", evaluation_start: int = WARMUP_BARS, *,
@@ -14,16 +14,17 @@ def run_backtest(df: pd.DataFrame, symbol: str = "BTC/USDT", evaluation_start: i
                  limits: RiskLimits | None = None, source: str = "OHLCV replay",
                  keep_trace: bool = False, liquidate: bool = True) -> dict:
     instrument = instrument or Instrument(symbol, "REPLAY", "USDT", "crypto spot", "1m")
-    frame = validate_ohlcv(df, interval_ms=60_000 if instrument.timeframe == "1m" else None)
+    interval = CRYPTO_INTERVAL_MS.get(instrument.timeframe)
+    frame = validate_ohlcv(df, interval_ms=interval)
     if "closed_ms" not in frame:
-        if instrument.timeframe != "1m":
-            raise ValueError("non-minute replay requires UTC bar close timestamps")
-        frame["closed_ms"] = frame["timestamp"] + 60_000
+        if interval is None:
+            raise ValueError("session-based replay requires UTC bar close timestamps")
+        frame["closed_ms"] = frame["timestamp"] + interval
     frame["closed_ms"] = pd.to_numeric(frame["closed_ms"], errors="raise")
     if (frame["closed_ms"].isna().any() or (frame["closed_ms"] % 1 != 0).any()
             or (frame["closed_ms"] <= frame["timestamp"]).any()
             or (frame["closed_ms"].iloc[:-1].to_numpy() > frame["timestamp"].iloc[1:].to_numpy()).any()
-            or (instrument.timeframe == "1m" and (frame["closed_ms"] - frame["timestamp"] != 60_000).any())):
+            or (interval is not None and (frame["closed_ms"] - frame["timestamp"] != interval).any())):
         raise ValueError("bar close timestamps are inconsistent with replay execution")
     account = PaperExecutor(limits, currency=instrument.currency)
     equity_curve = [account.equity]
@@ -39,7 +40,8 @@ def run_backtest(df: pd.DataFrame, symbol: str = "BTC/USDT", evaluation_start: i
         exposure.append(account.exposure / account.equity if account.equity > 0 else 0)
     if exposure and liquidate and account.positions:
         account.close(instrument.key, float(frame["close"].iloc[-1]), "BACKTEST_END",
-                      now=utc_ms(frame["closed_ms"].iloc[-1]), instrument=instrument)
+                      now=utc_ms(frame["closed_ms"].iloc[-1]), instrument=instrument,
+                      spread_bps=account.limits.spread_bps)
         equity_curve.append(account.equity)
     series = pd.Series(equity_curve, dtype=float)
     drawdown = 1 - series / series.cummax()
@@ -54,6 +56,8 @@ def run_backtest(df: pd.DataFrame, symbol: str = "BTC/USDT", evaluation_start: i
         "turnover_pct": round(100 * sum(f["amount"] * f["price"] for f in fills) / start, 6),
         "mean_exposure_pct": round(100 * sum(exposure) / max(1, len(exposure)), 6),
         "fees": account.fees,
+        "buys": sum(o["side"] == "BUY" for o in snapshot["orders"]),
+        "buy_rejections": sum(o["side"] == "BUY" and o["status"] == "RISK_REJECTED" for o in snapshot["orders"]),
         "from": utc_ms(frame["timestamp"].iloc[evaluation_start]).isoformat() if exposure else None,
         "to": utc_ms(frame["closed_ms"].iloc[-1]).isoformat() if exposure else None,
         **({"events": events, "account": snapshot} if keep_trace else {}),

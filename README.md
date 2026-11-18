@@ -77,11 +77,76 @@ Sổ paper lưu SQLite tại `OMNI_QUANT_DB_PATH`. Dùng một tiến trình run
 
 Vue/Tauri cũ dùng các API tương thích. Dashboard mới dùng chung nguồn dữ liệu với backend. Core chạy độc lập với AI. Module LLM hiện có trong `requirements-llm.txt` nằm ngoài đường xử lý lệnh.
 
-## Tín hiệu và phép đo
+## Chiến lược và quản trị rủi ro
 
-- Baseline `sweep-v1` cần 35 nến hoàn tất và dùng tối đa 99 nến gần nhất. RSI dùng EMA với alpha 1/14 trên phần tăng/giảm, RSI bằng 50 khi giá phẳng và 100 khi chỉ tăng. MACD histogram là EMA12 − EMA26 trừ EMA9 của MACD. ATR là trung bình 14 true range. Sweep BUY đòi hỏi xuyên đáy 10 nến trước rồi đóng trên đáy đó, histogram dương và RSI dưới 70. SELL dùng điều kiện đối xứng ở đỉnh, histogram âm và RSI trên 30. SELL chỉ giảm vị thế long. ATR không dương, thiếu warm-up hoặc điều kiện chưa đạt cho HOLD.
-- Giả thuyết `sweep-ema26-v1` giữ nguyên luật thoát, thêm điều kiện đóng trên EMA26 cho BUY. Báo cáo chạy baseline, giả thuyết và benchmark mua một lần với cùng giới hạn vốn. Các cửa sổ dùng 60 nến lịch sử và 45 nến ngoài mẫu. Quy tắc cố định trước khi đánh giá. Giá mở nến kế tiếp dùng cho tín hiệu replay, stop/take-profit quan sát tại giá mở và đóng, vị thế còn lại đóng tại giá cuối cửa sổ đánh giá.
-- Mỗi cửa sổ có 10.000 USDT, spread mô hình 0, slippage 5 bps và phí 6 bps mỗi chiều, rồi chạy lại với phí và slippage gấp đôi. Turnover là tổng giá trị fill chia cho vốn đầu kỳ. Exposure là trung bình tỷ lệ vị thế đánh dấu trên vốn mỗi nến. Báo cáo dùng dữ liệu tổng hợp và ít lệnh, phù hợp kiểm tra tính đúng chức năng. Baseline vẫn mặc định.
+Chọn một chiến lược cho mỗi phiên paper bằng `PAPER_STRATEGY`. Baseline `sweep-v1` vẫn là mặc định. Các chiến lược chung sổ cash long-only, engine risk, phí/slippage, giới hạn ví nhỏ và báo cáo quyết định.
+
+| ID | Điều kiện chính |
+|---|---|
+| `sweep-v1` | Quét biên 10 nến, MACD histogram và RSI |
+| `sweep-ema26-v1` | Sweep với bộ lọc xu hướng EMA26 cho BUY |
+| `ict-fvg-v1` | Sweep và thu hồi, displacement đổi cấu trúc, fair value gap xác nhận |
+| `donchian-20-10-v1` | Mua khi phá đỉnh 20 nến cùng xu hướng, thoát khi mất đáy 10 nến |
+| `ema-pullback-v1` | EMA12/26 và RSI vượt 50 sau nhịp hồi |
+| `bollinger-reentry-v1` | Mua khi giá trở lại dải dưới Bollinger, thoát tại đường trung bình |
+
+ICT là bộ quy tắc định lượng lấy cảm hứng từ ICT. Nến đầu quét và đóng lại qua biên thanh khoản 10 nến trước. Nến thứ hai có thân tối thiểu 0,8 ATR trước displacement và đóng qua biên đối diện. Nến thứ ba xác nhận FVG ba nến rộng ít nhất 0,1 ATR. BUY đặt stop dự kiến dưới đáy quét một tick. Risk từ chối nếu giá vào đã vượt qua stop theo hướng bất lợi hoặc khoảng stop rộng quá giới hạn. Mẫu giảm chỉ thoát long. Dashboard ghi rõ FVG, displacement và stop để đối chiếu từng tín hiệu.
+
+Ví dụ đổi chiến lược cho phiên paper trên Binance. Dùng SQLite riêng và xóa cấu hình `MARKET_MAX_AGE_SECONDS` cũ nếu nó được đặt cho khung 1m.
+
+```powershell
+$env:MARKET_EXCHANGE = 'binance'
+$env:MARKET_SCAN_QUOTE = 'USDT'
+$env:MARKET_TIMEFRAME = '15m'
+$env:PAPER_STRATEGY = 'ict-fvg-v1'
+$env:PAPER_MICRO_CAPITAL = '25'
+$env:PAPER_TAKER_FEE_BPS = '10'
+$env:MARKET_FEED_ENABLED = 'true'
+$env:OMNI_QUANT_DB_PATH = '.\data\micro-binance-ict-25.sqlite3'
+.\.venv\Scripts\python.exe backend_trading_core\run_backend.py
+```
+
+Backend đọc nến đã đóng, hỗ trợ `1m`, `5m`, `15m`, `1h`. Sàn có thể trả lỗi truy cập tùy khu vực. Chỉ theo dõi một sổ cho mỗi cấu hình sàn và chiến lược.
+
+### So sánh trên nến lịch sử
+
+Demo tổng hợp chỉ kiểm tra chức năng. Dùng CSV từ nguồn dữ liệu đã xác minh để đo lại với ví 10–50 USDT. CSV gồm `timestamp,open,high,low,close,volume`. Timestamp là thời điểm mở nến UTC tính bằng mili giây. Cần dữ liệu đã đóng, đúng thứ tự và liên tục. Có thể dùng trực tiếp ZIP kline từ Binance Data Vision.
+
+```powershell
+.\.venv\Scripts\python.exe backend_trading_core\run_backend.py --research-crypto .\BTCUSDT.csv --crypto-symbol BTC/USDT --timeframe 1h --research-capital 25 --output .\demo_output\research-btc
+Invoke-Item .\demo_output\research-btc\report.html
+```
+
+Chạy tất cả chiến lược, so với giữ tiền mặt và mua giữ theo cùng hạn mức. Mặc định 60 nến warm-up, 168 nến mỗi cửa sổ ngoài mẫu, phí 10 bps, slippage 10 bps mỗi chiều và spread 6 bps, rồi kiểm tra lại ở 2× chi phí. Chỉnh `--research-tick`, `--research-lot` và `--research-min-notional` theo thông số từng cặp. Replay vào ở giá mở nến kế, xử lý gap tại giá mở và giả định stop trước nếu một nến chạm cả stop lẫn target. Dữ liệu OHLCV không tái hiện được sổ lệnh, luân phiên scanner hoặc thanh khoản intrabar. Báo cáo có SHA256 của CSV, số lệnh, BUY bị chặn, lợi nhuận ròng và drawdown.
+
+Lần nghiệm thu dùng nến Binance spot 1h tháng 10/2025 của BTC, ETH và SOL, vốn 25 USDT và bốn cửa sổ mỗi cặp. EMA pullback có lợi nhuận ròng trung vị lần lượt +0,034%, +0,444%, −1,009% ở chi phí 1× và âm trên cả ba cặp ở 2×. ICT có một giao dịch trên SOL với cửa sổ khoảng −1,00%. BTC và ETH không có giao dịch ICT. Mẫu này quá ngắn để kết luận hiệu quả. [Nguồn ZIP công khai](THIRD_PARTY_NOTICES.md)
+
+## Kết nối sàn
+
+| Sàn | Chế độ có sẵn trong LuNu | Bước thử khớp sau paper |
+|---|---|---|
+| Binance | Đọc spot công khai qua CCXT. CLI Spot Testnet riêng | Dùng khóa HMAC tạo tại Spot Testnet. Preview, submit và đối soát với tiền mô phỏng |
+| OKX | Đọc spot công khai qua CCXT | Demo Trading dùng API key mô phỏng, passphrase và cờ simulated trading. Adapter lệnh chưa có |
+| Bybit | Đọc spot công khai qua CCXT khi endpoint khả dụng | Chọn Demo Trading hoặc Testnet, dùng khóa đúng môi trường. Adapter lệnh chưa có |
+| Bitget | Đọc spot công khai qua CCXT | Demo Trading dùng khóa demo và passphrase. Adapter lệnh chưa có |
+
+### Binance Spot Testnet
+
+Gọi `ping` trước. Tạo khóa HMAC riêng tại Spot Testnet và đưa vào môi trường tiến trình dưới tên `BINANCE_TESTNET_API_KEY` và `BINANCE_TESTNET_API_SECRET`. Các lệnh bên dưới dùng giá và số lượng minh họa.
+
+```powershell
+$py = '.\.venv\Scripts\python.exe'
+$cli = 'backend_trading_core\binance_testnet.py'
+& $py $cli ping
+& $py $cli preview BTCUSDT BUY 0.00010 100000 LNU-T-probe01 --stop-price 98500
+& $py $cli submit BTCUSDT BUY 0.00010 100000 LNU-T-probe01 --stop-price 98500 --confirm-testnet
+& $py $cli reconcile LNU-T-probe01
+& $py $cli status
+```
+
+Dùng giá và khối lượng theo bộ lọc và sổ lệnh Spot Testnet lúc thử. Lệnh LIMIT IOC có thể không khớp hoặc chỉ khớp một phần. Chương trình ghim host Testnet, kiểm tra bước giá/lô, min notional, số dư và giới hạn ví 10–50 USDT. BUY qua risk engine chung, giới hạn tối đa 60% ngân sách và khối lượng theo rủi ro ở mức stop khai báo. `--stop-price` chỉ dùng để tính khối lượng, CLI chưa gửi lệnh stop bảo vệ. SELL chỉ giảm lượng mua đã được đối soát trong journal. CLI lưu client ID trước khi gửi, đọc `myTrades` để xác nhận fill/phí, và giữ lệnh chờ khi phản hồi không rõ. Dùng `reconcile` theo ID cũ sau timeout. Để hủy lệnh còn mở, dùng `cancel <client_id> --confirm-testnet`. Journal thật của sàn demo nằm ở `data/binance-spot-testnet.sqlite3`, độc lập với tài khoản paper. Binance có thể reset Testnet. Nếu reset làm ID biến mất, đối chiếu trên Testnet rồi dùng journal mới cho đợt mới.
+
+CLI là phép thử lệnh thủ công. Để vào lệnh tiền thật về sau, cần một adapter production riêng dùng nguồn số dư và fill từ sàn, kết nối chặt với risk engine, limit lỗ, stop trên sàn, kill switch và đối soát sau restart. Bật production cần quyết định riêng sau khi xem kết quả ngoài mẫu và testnet. Khóa production chỉ cần quyền trade spot, tắt quyền rút và giới hạn IP khi sàn hỗ trợ.
 
 ## Kiểm thử và trạng thái môi trường
 
@@ -95,7 +160,7 @@ $env:PYTHONPATH = 'backend_trading_core'
 | Offline demo | Hai thị trường synthetic, một báo cáo HTML và snapshot JSON |
 | Crypto paper | OHLCV spot công khai qua CCXT, fill giả lập và sổ SQLite |
 | Equity paper | Replay CSV phiên XNYS, tài khoản USD và lịch phiên |
-| Testnet | Hợp đồng submit/lookup/cancel kiểm thử với fake broker. Binance Spot Testnet được đối chiếu tài liệu. Kết nối đặt lệnh vào venue chưa triển khai |
+| Testnet | CLI Binance Spot Testnet với SQLite riêng. Chữ ký, gửi, timeout và đối soát đã kiểm thử bằng HTTP giả lập. Ping thật trả HTTP 451 trong môi trường kiểm thử |
 | Live | Chưa triển khai. Entry point lỗi nếu `LIVE_TRADING_ENABLED=true` |
 
 Xem [nguồn, phiên bản và giấy phép](THIRD_PARTY_NOTICES.md).

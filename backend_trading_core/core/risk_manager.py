@@ -45,9 +45,15 @@ class RiskManager:
         peak = self.state.high_water_mark
         return max(0.0, 1 - equity / peak) if peak else 0.0
 
-    def stop_distance(self, price: float, atr: float) -> float:
-        return min(max(atr * 1.5, price * self.limits.min_stop_distance_pct),
-                   price * self.limits.max_stop_distance_pct)
+    def stop_distance(self, price: float, atr: float, structural_stop: float | None = None) -> float | None:
+        minimum = price * self.limits.min_stop_distance_pct
+        maximum = price * self.limits.max_stop_distance_pct
+        if structural_stop is not None:
+            distance = price - structural_stop
+            if not isfinite(structural_stop) or structural_stop <= 0 or not 0 < distance <= maximum:
+                return None
+            return max(distance, minimum)
+        return min(max(atr * 1.5, minimum), maximum)
 
     def one_way_adjustment(self, spread_bps: float | None) -> float:
         spread = self.limits.spread_bps if spread_bps is None else spread_bps
@@ -98,7 +104,12 @@ class RiskManager:
         if self.drawdown(equity) >= self.limits.max_drawdown_pct:
             return RiskDecision(False, "maximum drawdown limit reached")
 
-        stop = self.stop_distance(price, intent.atr)
+        structural_stop = intent.structural_stop
+        if structural_stop is not None and intent.price <= structural_stop:
+            return RiskDecision(False, "market price crossed the structural stop before entry")
+        stop = self.stop_distance(price, intent.atr, structural_stop)
+        if stop is None:
+            return RiskDecision(False, "structural stop invalid or wider than the risk cap")
         if stop <= 0:
             return RiskDecision(False, "invalid stop distance")
         budget = min(equity * self.limits.max_position_notional_pct,

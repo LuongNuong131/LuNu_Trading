@@ -94,6 +94,7 @@ class OrderIntent:
     evidence: dict | None = None
     spread_bps: float | None = None
     entry_block_reason: str | None = None
+    structural_stop: float | None = None
 
 
 @dataclass(frozen=True)

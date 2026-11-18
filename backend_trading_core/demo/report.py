@@ -80,6 +80,11 @@ def render_report(snapshot: dict) -> str:
                                   "Đáy 10 nến", "Quét đáy", "Quét đỉnh"),
                                  [(indicators.get(key) for key in ("rsi", "macd_hist", "atr", "ema26",
                                   "prior_10_high", "prior_10_low", "liquidity_sweep_bullish", "liquidity_sweep_bearish"))])
+            if event.get("strategy") == "ict-fvg-v1":
+                keys = ("ict_prior_low", "ict_prior_high", "ict_displacement_body", "ict_fvg_up", "ict_fvg_down")
+                details += table(("Đáy tham chiếu", "Đỉnh tham chiếu", "Thân displacement", "FVG tăng",
+                                  "FVG giảm", "Stop cấu trúc"), [[indicators.get(k) for k in keys]
+                                                                + [event.get("structural_stop")]])
             decision = order["decision"]
             risk = table(("Thời điểm UTC", "Risk", "Trạng thái lệnh", "Giá dự kiến", "Khối lượng",
                           "Lỗ ước tính tại stop", "Tiền trước lệnh", "Sàn mô phỏng"),
@@ -100,7 +105,17 @@ def render_report(snapshot: dict) -> str:
         def metric(row, cost):
             return (row["strategy"], cost, row["from"], row["to"], row["trades"], row["return_pct"],
                     row["max_drawdown_pct"], row["turnover_pct"], row["mean_exposure_pct"], row["fees"])
+        summary_rows = []
+        for trial in result["trials"]:
+            validation = trial["validation"]
+            summary = validation["summary"]
+            windows = validation["windows"]
+            summary_rows.append((trial["strategy"], trial["cost_multiplier"],
+                                 sum(w["trades"] for w in windows), sum(w["buy_rejections"] for w in windows),
+                                 summary["profitable_windows"], summary["median_return_pct"], summary["worst_drawdown_pct"]))
         research = (f"<section><h2>Đánh giá theo cửa sổ</h2><p>{text(result['assumptions'])}</p>"
+                    + table(("Mô hình", "Chi phí ×", "Lệnh đóng", "BUY bị chặn", "Cửa sổ có lãi",
+                             "Lãi ròng trung vị (%)", "Drawdown lớn nhất (%)"), summary_rows)
                     + table(metric_columns, (metric(row, trial["cost_multiplier"])
                                              for trial in result["trials"] for row in trial["validation"]["windows"]))
                     + "</section>")
@@ -119,7 +134,8 @@ table {{border-collapse:collapse; width:100%; font-size:.86rem; font-variant-num
 th,td {{text-align:left; padding:.6rem; border-bottom:1px solid #344761}} th,b {{color:#8edbce}}
 summary {{cursor:pointer; padding:.65rem 0; overflow-wrap:anywhere}} details+details {{border-top:1px solid #344761}}
 </style></head><body>
-<header><h1>LuNu Trading</h1><p>{text(snapshot['mode'])} · {text(snapshot['source_note'])}</p></header>
+<header><h1>LuNu Trading</h1><p>{text(snapshot['mode'])} · {text(snapshot['source_note'])}</p>
+{f"<p>Chiến lược paper · {text(snapshot['strategy'])}</p>" if snapshot.get('strategy') else ""}</header>
 {scan_header}
 <section><h2>Watchlist</h2>{overview}</section>
 <section><h2>Tài khoản paper</h2>{''.join(accounts)}</section>

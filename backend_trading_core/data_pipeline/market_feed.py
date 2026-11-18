@@ -9,11 +9,11 @@ from typing import Any
 
 from core.event_engine import Event, event_engine
 from core.models import Instrument, utc_now
-from data_pipeline.bars import finalized_crypto
+from data_pipeline.bars import CRYPTO_INTERVAL_MS, finalized_crypto
 from data_pipeline.scanner import ScanSettings, SpotScanner
 
 
-def instrument_from_market(exchange, symbol: str) -> Instrument:
+def instrument_from_market(exchange, symbol: str, timeframe: str = "1m") -> Instrument:
     import ccxt
 
     market = exchange.market(symbol)
@@ -30,7 +30,7 @@ def instrument_from_market(exchange, symbol: str) -> Instrument:
         return float(value) if exchange.precisionMode == ccxt.TICK_SIZE else 10 ** -int(value)
 
     limits = market["limits"]
-    return Instrument(symbol, exchange.id, market["quote"], "crypto spot", "1m",
+    return Instrument(symbol, exchange.id, market["quote"], "crypto spot", timeframe,
                       step("price"), step("amount"), limits.get("amount", {}).get("min") or 0.0,
                       limits.get("cost", {}).get("min") or 0.0)
 
@@ -39,6 +39,9 @@ class MarketFeed:
     def __init__(self, exchange_id: str | None = None, symbols: list[str] | None = None,
                  poll_seconds: int | None = None, scan_settings: ScanSettings | None = None) -> None:
         self.exchange_id = exchange_id or os.getenv("MARKET_EXCHANGE", "binance")
+        self.timeframe = os.getenv("MARKET_TIMEFRAME", "1m").strip()
+        if self.timeframe not in CRYPTO_INTERVAL_MS:
+            raise ValueError(f"unsupported MARKET_TIMEFRAME: {self.timeframe}")
         self.symbols = symbols or [s.strip() for s in os.getenv("MARKET_SYMBOLS", "BTC/USDT").split(",") if s.strip()]
         self.poll_seconds = max(15, int(poll_seconds or os.getenv("MARKET_POLL_SECONDS", "60")))
         self.scanner = SpotScanner(scan_settings) if scan_settings else None
@@ -56,17 +59,21 @@ class MarketFeed:
         if self.exchange_id not in ccxt.exchanges:
             raise ValueError("unsupported CCXT exchange")
         exchange_cls = getattr(ccxt, self.exchange_id)
+        options = {"defaultType": "spot"}
+        if self.exchange_id in {"binance", "okx", "bybit", "bitget"}:
+            options["fetchMarkets"] = {"types": ["spot"]}
         self.exchange = exchange_cls({"enableRateLimit": True, "timeout": 12_000,
-                                      "aiohttp_trust_env": True, "options": {"defaultType": "spot"}})
+                                      "aiohttp_trust_env": True, "options": options})
+        self.exchange.has["fetchCurrencies"] = False
         self.exchange.ssl_context = ssl.create_default_context()
         await self.exchange.load_markets()
         self._markets_loaded_at = asyncio.get_running_loop().time()
 
     async def _read_bar(self, symbol: str) -> dict:
-        instrument = instrument_from_market(self.exchange, symbol)
-        rows = await self.exchange.fetch_ohlcv(symbol, "1m", limit=100)
+        instrument = instrument_from_market(self.exchange, symbol, self.timeframe)
+        rows = await self.exchange.fetch_ohlcv(symbol, self.timeframe, limit=100)
         observed_at = utc_now()
-        bars = finalized_crypto(rows, observed_at)
+        bars = finalized_crypto(rows, observed_at, self.timeframe)
         return {"instrument": instrument, "bars": bars, "observed_at": observed_at}
 
     async def fetch_once(self, symbol: str) -> None:
