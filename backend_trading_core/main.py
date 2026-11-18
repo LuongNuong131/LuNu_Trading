@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import webbrowser
 from pathlib import Path
 
 import uvicorn
@@ -18,7 +19,23 @@ from data_pipeline.market_feed import market_feed
 log = logging.getLogger("lunu")
 
 
-async def run() -> None:
+DASHBOARD_HOST = "127.0.0.1"
+DASHBOARD_PORT = 8000
+DASHBOARD_URL = f"http://{DASHBOARD_HOST}:{DASHBOARD_PORT}/dashboard"
+
+
+async def _open_when_ready(server: uvicorn.Server) -> None:
+    while not server.started:
+        await asyncio.sleep(0.1)
+    try:
+        if await asyncio.to_thread(webbrowser.open, DASHBOARD_URL):
+            return
+    except (OSError, webbrowser.Error):
+        pass
+    log.info("Open the paper dashboard in your browser: %s", DASHBOARD_URL)
+
+
+async def run(*, open_dashboard: bool = False) -> None:
     if os.getenv("LIVE_TRADING_ENABLED", "false").strip().lower() in {"1", "true", "yes", "on"}:
         raise RuntimeError("This entrypoint only supports paper trading")
     feed_enabled = os.getenv("MARKET_FEED_ENABLED", "false").strip().lower() in {"1", "true", "yes", "on"}
@@ -30,12 +47,16 @@ async def run() -> None:
     event_engine.register("SCAN_ERROR", runtime.scan_error)
     event_engine.start()
     feed_task = market_feed.start(lambda: runtime.priority_symbols(market_feed.exchange_id)) if feed_enabled else None
-    log.info("Paper dashboard: http://127.0.0.1:8000/dashboard (public feed %s)",
+    log.info("Paper dashboard: %s (public feed %s)", DASHBOARD_URL,
              "enabled" if feed_enabled else "disabled")
-    server = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=8000, log_level="warning"))
+    server = uvicorn.Server(uvicorn.Config(app, host=DASHBOARD_HOST, port=DASHBOARD_PORT, log_level="warning"))
+    browser_task = asyncio.create_task(_open_when_ready(server)) if open_dashboard else None
     try:
         await server.serve()
     finally:
+        if browser_task is not None:
+            browser_task.cancel()
+            await asyncio.gather(browser_task, return_exceptions=True)
         await market_feed.stop()
         if feed_task is not None:
             feed_task.cancel()

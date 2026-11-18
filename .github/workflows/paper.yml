@@ -42,7 +42,35 @@ jobs:
         run: |
           .\.venv\Scripts\python.exe -m unittest discover -s tests -v
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          .\.venv\Scripts\python.exe backend_trading_core\run_backend.py --demo
+          cmd /c run_windows.cmd demo --no-browser
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          if (!(Test-Path .\demo_output\report.html)) { throw 'Offline report was not generated' }
+      - name: Launch paper from CMD
+        if: runner.os == 'Windows'
+        env:
+          MARKET_FEED_ENABLED: 'false'
+          OMNI_QUANT_DB_PATH: ./data/windows-smoke.sqlite3
+        run: |
+          $process = Start-Process -FilePath $env:ComSpec -ArgumentList '/d', '/c', 'run_windows.cmd', 'paper', '--no-browser' -PassThru -WindowStyle Hidden
+          try {
+            $response = $null
+            for ($attempt = 0; $attempt -lt 20; $attempt++) {
+              try {
+                $response = Invoke-WebRequest -Uri 'http://127.0.0.1:8000/dashboard' -TimeoutSec 2
+                break
+              } catch {
+                if ($process.HasExited) { throw 'CMD exited before starting the dashboard' }
+                Start-Sleep -Seconds 1
+              }
+            }
+            if ($response.StatusCode -ne 200 -or $response.Content -notmatch 'LuNu Trading') {
+              throw 'Paper dashboard was not reachable'
+            }
+          } finally {
+            if (!$process.HasExited) {
+              taskkill /PID $process.Id /T /F
+            }
+          }
       - name: Test and replay on Linux
         if: runner.os == 'Linux'
         env:

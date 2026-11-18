@@ -27,6 +27,8 @@ if errorlevel 1 exit /b 1
 if errorlevel 1 exit /b 1
 
 echo.
-echo Setup complete. Run the offline demo with:
-echo   .venv\Scripts\python.exe backend_trading_core\run_backend.py --demo
+echo Setup complete.
+echo   run_windows.cmd               Start the paper dashboard
+echo   run_windows.cmd demo          Run the offline demo
+echo   run_windows.cmd binance-paper Start Binance paper with ICT
 exit /b 0

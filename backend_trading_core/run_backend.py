@@ -14,6 +14,7 @@ def main() -> None:
     modes = parser.add_mutually_exclusive_group()
     modes.add_argument("--demo", action="store_true", help="run the offline replay and write an HTML report")
     modes.add_argument("--research-crypto", type=Path, help="compare strategies offline using an OHLCV CSV or Binance kline zip")
+    parser.add_argument("--open-dashboard", action="store_true", help="open the browser after the paper server binds")
     parser.add_argument("--output", type=Path, default=Path("demo_output"))
     parser.add_argument("--equity-csv", type=Path, help="replace sample equity data with raw XNYS daily data")
     parser.add_argument("--equity-symbol", default="DEMO")
@@ -28,6 +29,8 @@ def main() -> None:
     parser.add_argument("--research-warmup", type=int, default=60)
     parser.add_argument("--research-window", type=int, default=168)
     args = parser.parse_args()
+    if args.open_dashboard and (args.demo or args.research_crypto):
+        parser.error("--open-dashboard requires the paper server")
     if args.research_crypto:
         from backtest.experiment import run_crypto_research
 
@@ -62,7 +65,7 @@ def main() -> None:
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
     try:
-        asyncio.run(run())
+        asyncio.run(run(open_dashboard=args.open_dashboard))
     except KeyboardInterrupt:
         print("Backend stopped by user.", flush=True)
 

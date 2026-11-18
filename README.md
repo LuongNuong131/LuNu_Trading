@@ -2,16 +2,20 @@
 
 LuNu Trading chạy nghiên cứu và paper spot/cash từ dữ liệu tổng hợp, CSV cổ phiếu hoặc OHLCV crypto công khai. Tín hiệu, kiểm tra rủi ro, fill và sổ cái dùng chung một đường xử lý. Mỗi đồng tiền dùng một sổ riêng.
 
-## Chạy demo trên Windows
+## Chạy từ CMD trên Windows
 
-Từ thư mục checkout, dùng PowerShell với Python 3.12–3.14 đã cài:
+Mở Command Prompt trong thư mục repo. Máy cần Python 3.12–3.14.
 
-```powershell
+```bat
 git pull --ff-only origin master
-.\setup_windows.cmd
-.\.venv\Scripts\python.exe backend_trading_core\run_backend.py --demo
-Invoke-Item .\demo_output\report.html
+run_windows.cmd demo
 ```
+
+Lệnh tạo `.venv` nếu chưa có và mở báo cáo demo khi chạy xong. Từ PowerShell, dùng tiền tố `.\` trước `run_windows.cmd`.
+
+- `run_windows.cmd` khởi động dashboard paper theo cấu hình hiện tại. Feed tắt theo mặc định nếu chưa cấu hình.
+- `run_windows.cmd binance-paper` mở dashboard paper với giá Binance công khai, chiến lược ICT 15m và ví mô phỏng 25 USDT. Preset dùng sổ riêng tại `data\micro-binance-ict-25.sqlite3`. Nếu feed báo lỗi, dashboard vẫn mở và hiển thị trạng thái.
+- Với dashboard chạy liên tục, giữ cửa sổ CMD mở và bấm Ctrl+C để dừng. Nếu trình duyệt chưa mở, vào `http://127.0.0.1:8000/dashboard`.
 
 Cài đặt cần kết nối để tải dependency. Demo chạy offline, không dùng API key, AI hay frontend build. Báo cáo HTML và `snapshot.json` nằm trong `demo_output` (đổi bằng `--output`). Mở một hàng trong mục **Truy vết tín hiệu, rủi ro và fill** để xem chỉ báo, ID tín hiệu, quyết định, lệnh, fill, phí và biến động tài khoản. Demo dùng fixture BTC/USDT sinh từ seed 19 và cổ phiếu giả định DEMO trên lịch XNYS. Cùng input cho cùng ID và số dư.
 
@@ -132,7 +136,7 @@ Lần nghiệm thu dùng nến Binance spot 1h tháng 10/2025 của BTC, ETH và
 
 ### Binance Spot Testnet
 
-Gọi `ping` trước. Tạo khóa HMAC riêng tại Spot Testnet và đưa vào môi trường tiến trình dưới tên `BINANCE_TESTNET_API_KEY` và `BINANCE_TESTNET_API_SECRET`. Các lệnh bên dưới dùng giá và số lượng minh họa.
+Khi `ping` in `"status": "reachable"` rồi trở về CMD, phép thử kết nối đã hoàn tất. Khởi động dashboard paper bằng `run_windows.cmd`. Để thử lệnh Testnet, tạo khóa HMAC riêng tại Spot Testnet và đưa vào môi trường tiến trình dưới tên `BINANCE_TESTNET_API_KEY` và `BINANCE_TESTNET_API_SECRET`. Các lệnh bên dưới dùng giá và số lượng minh họa.
 
 ```powershell
 $py = '.\.venv\Scripts\python.exe'

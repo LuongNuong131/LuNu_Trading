@@ -40,7 +40,11 @@ def main():
         client = Client(key, secret)
         if args.action == "ping":
             client.request("GET", "/api/v3/ping")
-            result = {"mode": "Binance Spot Testnet", "status": "reachable"}
+            result = {
+                "mode": "Binance Spot Testnet",
+                "status": "reachable",
+                "message": "Connectivity check complete. To start the paper dashboard on Windows, run run_windows.cmd.",
+            }
         else:
             if not key or not secret:
                 raise ValueError("set BINANCE_TESTNET_API_KEY and BINANCE_TESTNET_API_SECRET in the process environment")
