@@ -19,7 +19,9 @@ class ValidationWindow:
 def rolling_windows(length: int, train_size: int, test_size: int, step: int | None = None) -> list[ValidationWindow]:
     if min(length, train_size, test_size) <= 0 or train_size + test_size > length:
         return []
-    step = step or test_size
+    step = test_size if step is None else step
+    if step <= 0:
+        raise ValueError("window step must be positive")
     windows: list[ValidationWindow] = []
     start = 0
     while start + train_size + test_size <= length:
@@ -36,16 +38,15 @@ def summarize_returns(results: list[dict]) -> dict:
     return {"windows": len(results), "profitable_windows": int((returns > 0).sum()), "median_return_pct": round(float(returns.median()), 6), "worst_return_pct": round(float(returns.min()), 6), "worst_drawdown_pct": round(float(drawdowns.max()), 6)}
 
 
-def walk_forward_validate(df: pd.DataFrame, symbol: str = "BTC/USDT", train_size: int = 500, test_size: int = 100) -> dict:
-    """Evaluate only forward test segments; the train segment is reserved for strategy selection."""
+def walk_forward_validate(df: pd.DataFrame, symbol: str = "BTC/USDT", train_size: int = 500,
+                          test_size: int = 100, **replay_options) -> dict:
+    """Use the training window as warm-up for fixed rules, then score only forward bars."""
     windows = rolling_windows(len(df), train_size, test_size)
     results = []
     for window in windows:
-        test = df.iloc[window.test_start:window.test_end].copy()
-        # Include only a warm-up prefix from the training boundary, never future test rows.
-        warmup = df.iloc[max(0, window.test_start - 35):window.test_end].copy()
-        result = run_backtest(warmup, symbol)
-        result["window"] = {"train_start": window.train_start, "train_end": window.train_end, "test_start": window.test_start, "test_end": window.test_end}
-        result["test_rows"] = len(test)
+        prefix_and_test = df.iloc[window.train_start:window.test_end].copy()
+        result = run_backtest(prefix_and_test, symbol, evaluation_start=train_size, **replay_options)
+        result["window"] = vars(window)
+        result["test_rows"] = test_size
         results.append(result)
     return {"summary": summarize_returns(results), "windows": results}

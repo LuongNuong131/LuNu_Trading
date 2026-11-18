@@ -51,7 +51,23 @@ class DuckDBClient:
                     symbol TEXT,
                     payload TEXT NOT NULL
                 );
+                CREATE INDEX IF NOT EXISTS audit_by_symbol ON audit_events(symbol, event_type, timestamp);
+                CREATE TABLE IF NOT EXISTS paper_accounts (currency TEXT PRIMARY KEY, state TEXT NOT NULL);
             """)
+
+    def paper_currencies(self) -> list[str]:
+        with self._lock:
+            rows = self.conn.execute("SELECT currency FROM paper_accounts ORDER BY currency").fetchall()
+            return [row[0] for row in rows]
+
+    def latest_signal(self, symbol: str) -> dict | None:
+        with self._lock:
+            row = self.conn.execute(
+                "SELECT payload FROM audit_events WHERE symbol = ? AND event_type = 'SIGNAL_GENERATED' "
+                "ORDER BY timestamp DESC, rowid DESC LIMIT 1", (symbol,),
+            ).fetchone()
+        event = json.loads(row[0]) if row else None
+        return event if event and "quote_closed_at" in event else None
 
     @staticmethod
     def _now() -> str:

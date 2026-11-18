@@ -1,14 +1,19 @@
 # Third-party and upstream notices
 
-This repository was assembled after reviewing the following user-selected upstream repositories. In this revision, their full source trees are not copied into the new core. Any future vendoring or direct code reuse must preserve the original license and notices and must be reviewed before distribution.
+The six user-selected forks were inspected at the revisions below. LuNu implements the listed concepts independently. The six source trees are neither imported nor bundled.
 
-| Repository | Upstream license | Intended boundary |
-|---|---|---|
-| `LuNu_Trading1_nautechsystems-nautilus_trader` | LGPL-3.0 | Separate process, plugin, or independently distributed component unless LGPL obligations are deliberately satisfied. |
-| `LuNu_Trading2_freqtrade-freqtrade` | GPL-3.0 | External integration or separately distributed GPL component; do not copy modules into a permissive core casually. |
-| `LuNu_Trading3_TauricResearch-TradingAgents` | Apache-2.0 | Advisory research integration may be possible with attribution and NOTICE preservation. |
-| `LuNu_Trading4_HKUDS-Vibe-Trading` | MIT, with bundled third-party notices | Selective integration may be possible after preserving upstream notices and bundled notices. |
-| `LuNu_Trading5_vnpy-vnpy` | MIT | Selective integration may be possible with copyright attribution. |
-| `LuNu_Trading6_666ghj-MiroFish` | AGPL-3.0 | Separate research/simulation service unless AGPL obligations are deliberately accepted. |
+| Fork and inspected revision | License | Modules inspected | Application and compatibility |
+|---|---|---|---|
+| [NautilusTrader `85b71f0`](https://github.com/LuongNuong131/LuNu_Trading1_nautechsystems-nautilus_trader/tree/85b71f0895e17a70ffceb36b1ce204f8596cdf74) | LGPL-3.0 | `crates/live/src/execution/manager.rs`, `client.rs`, `failure.rs`; `crates/model/src/reports/fill.rs` | Persist-before-submit, client-ID lookup and fill deduplication inform the SQLite paper ledger and timeout/restart tests. Full engine deferred to avoid Rust/Cargo, its state store and a second execution authority. |
+| [Freqtrade `f65d885`](https://github.com/LuongNuong131/LuNu_Trading2_freqtrade-freqtrade/tree/f65d885fd5b668469cd46d4d3cef91c8d1a70832) | GPL-3.0 | `freqtrade/optimize/analysis/lookahead.py`, `recursive.py` | Historical prefix regression and forward test windows verify leakage and bound warm-up. External bot/CLI deferred. Fork needs Python ≥3.11 and CCXT ≥4.5.4. LuNu retains its existing CCXT version. |
+| [TradingAgents `ede4356`](https://github.com/LuongNuong131/LuNu_Trading3_TauricResearch-TradingAgents/tree/ede435676ea37294cc611b80d772c13113d5e647) | Apache-2.0 | `tradingagents/agents/managers/research_manager.py`, `tradingagents/reporting.py`, `tests/test_news_lookahead.py` | Signal report records supporting and invalidating criteria, sources and time. Multi-agent reasoning deferred due to LangGraph/LangChain, provider keys, external data access and costs. |
+| [Vibe-Trading `76bec14`](https://github.com/LuongNuong131/LuNu_Trading4_HKUDS-Vibe-Trading/tree/76bec1466e65fc681689399b1046426396f432fb) | MIT, plus bundled `NOTICE` | `agent/src/shadow_account/reporter.py`, `agent/src/tools/report_audit_tool.py` | Baseline/hypothesis/benchmark report with explicit window/cost assumptions and expandable trace. Python ≥3.11 agent/MCP stack deferred. |
+| [vn.py `9b165cb`](https://github.com/LuongNuong131/LuNu_Trading5_vnpy-vnpy/tree/9b165cb16d25943567230e59adefdc6e00d51f9e) | MIT | `vnpy/trader/gateway.py`, `vnpy/event/engine.py` | Instrument/venue keys and a small broker contract for requests and reports. Brokerage/desktop stack deferred. Fork depends on NumPy ≥2.2.3, TA-Lib and venue-specific packages. |
+| [MiroFish `02a07c3`](https://github.com/LuongNuong131/LuNu_Trading6_666ghj-MiroFish/tree/02a07c3c64d688075548cc821f969823489503f6) | AGPL-3.0 | `backend/app/services/simulation_runner.py`, `report_agent.py` | Synthetic inputs and cost-stress scenarios are clearly identified in the report. Agent simulation deferred due to CAMEL/OASIS, Zep, provider keys and Python ≥3.11,<3.13. |
 
-The names above are attribution and compatibility notes, not a claim that the upstream maintainers endorse LuNu Trading. Consult the original repositories and their complete license files before redistributing derivative code.
+## Runtime and documentation sources
+
+- CCXT 4.3.46 (MIT) powers public OHLCV and instrument terms via `data_pipeline/market_feed.py`. No API key required. Kraken returns its current incomplete candle. LuNu filters by elapsed UTC bar close. Verify with the Kraken paper command in README and check watchlist timestamps. [CCXT 4.3.46](https://github.com/ccxt/ccxt/tree/4.3.46) · [Kraken OHLC specification](https://docs.kraken.com/api/docs/rest-api/get-ohlc-data/)
+- exchange-calendars 4.11.3 (Apache-2.0) supplies the bundled XNYS calendar via `data_pipeline/bars.py`. No API key or service required. Unit tests verify Thanksgiving 2024, the early close the following day and the November clock change. [exchange-calendars 4.11.3](https://github.com/gerrymanoim/exchange_calendars/tree/4.11.3)
+- `data_pipeline/fixtures.py` and the generated sample CSV contain project-created synthetic prices. Offline acceptance verifies reproducibility and blocks Python socket connections.
+- Binance Spot Testnet uses a separate spot API host, test-only keys and balances, and periodic resets. This environment received HTTP 451 from its public ping. Venue execution, authentication, symbol filters and reconciliation against the venue remain unverified. The fake broker covers timeout after acceptance, lookup by client ID, cancellation, rejection, partial fills, and restart without duplicate fills. [Binance Spot Testnet](https://developers.binance.com/docs/binance-spot-api-docs/testnet/general-info)

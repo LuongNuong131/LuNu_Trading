@@ -5,12 +5,15 @@ import os
 
 from fastapi import FastAPI, Query, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import HTMLResponse
 
-from core.order_executor import executor
+from core.runtime import PaperRuntime
+from demo.report import render_report
 from db.duckdb_client import db_client
 
 
-app = FastAPI(title="LuNu Trading", version="0.3.0")
+app = FastAPI(title="LuNu Trading", version="0.4.0")
+runtime = PaperRuntime(db_client)
 _origins = [item.strip() for item in os.getenv("OMNI_QUANT_CORS_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173,http://localhost:1420,http://127.0.0.1:1420,tauri://localhost").split(",") if item.strip()]
 app.add_middleware(CORSMiddleware, allow_origins=_origins, allow_credentials=False, allow_methods=["GET"], allow_headers=["Content-Type"])
 
@@ -42,12 +45,22 @@ def get_audit(limit: int = Query(100, ge=1, le=500)) -> dict:
 
 @app.get("/api/stats")
 def get_stats() -> dict:
-    return {"success": True, "data": executor.snapshot()}
+    return {"success": True, "data": runtime.legacy_snapshot()}
 
 
 @app.get("/api/positions")
 def get_positions() -> dict:
-    return {"success": True, "data": executor.snapshot()["open_positions"]}
+    return {"success": True, "data": runtime.legacy_snapshot()["open_positions"]}
+
+
+@app.get("/api/snapshot")
+def get_snapshot() -> dict:
+    return {"success": True, "data": runtime.snapshot(include_signals=True)}
+
+
+@app.get("/dashboard", response_class=HTMLResponse)
+def dashboard() -> str:
+    return render_report(runtime.snapshot(include_signals=True))
 
 
 @app.websocket("/ws/snapshot")
@@ -56,7 +69,16 @@ async def snapshot_stream(websocket: WebSocket) -> None:
     await websocket.accept()
     try:
         while True:
-            await websocket.send_json({"type": "snapshot", "data": executor.snapshot()})
-            await asyncio.sleep(2)
+            await websocket.send_json({"type": "snapshot", "data": runtime.legacy_snapshot()})
+            deadline = asyncio.get_running_loop().time() + 2
+            try:
+                while True:
+                    message = await asyncio.wait_for(
+                        websocket.receive(), deadline - asyncio.get_running_loop().time(),
+                    )
+                    if message["type"] == "websocket.disconnect":
+                        return
+            except TimeoutError:
+                continue
     except (WebSocketDisconnect, asyncio.CancelledError):
         return

@@ -10,8 +10,9 @@ def calculate_rsi(series: pd.Series, period: int = 14) -> pd.Series:
     delta = series.diff()
     gain = delta.clip(lower=0).ewm(alpha=1 / period, adjust=False, min_periods=period).mean()
     loss = (-delta.clip(upper=0)).ewm(alpha=1 / period, adjust=False, min_periods=period).mean()
-    rs = gain / loss.replace(0, pd.NA)
-    return 100 - (100 / (1 + rs))
+    rsi = 100 - 100 / (1 + gain / loss.mask(loss == 0))
+    rsi = rsi.mask((loss == 0) & (gain > 0), 100.0)
+    return rsi.mask((loss == 0) & (gain == 0), 50.0)
 
 
 def get_technical_context(df: pd.DataFrame) -> dict:
@@ -45,6 +46,9 @@ def get_technical_context(df: pd.DataFrame) -> dict:
         "macd_hist": round(macd_hist, 8),
         "atr": round(atr_value, 8),
         "current_price": last,
+        "ema26": round(float(ema_slow.iloc[-1]), 8),
+        "prior_10_low": prior_low,
+        "prior_10_high": prior_high,
         "liquidity_sweep_bullish": bool(float(low.iloc[-1]) < prior_low and last > prior_low),
         "liquidity_sweep_bearish": bool(float(high.iloc[-1]) > prior_high and last < prior_high),
     }

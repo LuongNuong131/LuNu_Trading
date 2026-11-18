@@ -1,54 +1,82 @@
 # LuNu Trading
 
-LuNu Trading is a **paper-trading and research workspace** assembled from the user's six LuNu repositories. The current default runner is intentionally fail-closed: it reads public OHLCV data, computes deterministic features, applies explicit risk limits, and records simulated orders. It does **not** submit orders to an exchange.
+LuNu Trading chạy nghiên cứu và paper spot/cash từ dữ liệu tổng hợp, CSV cổ phiếu hoặc OHLCV crypto công khai. Tín hiệu, kiểm tra rủi ro, fill và sổ cái dùng chung một đường xử lý. Mỗi đồng tiền dùng một sổ riêng.
 
-> This project is research software, not a promise of profit. Crypto markets are volatile, fees and slippage matter, and historical or simulated performance does not guarantee future results.
+## Chạy demo trên Windows
 
-## What was combined
+Từ thư mục checkout, dùng PowerShell với Python 3.12–3.14 đã cài:
 
-The repository keeps the six upstream projects as integration references rather than copying their incompatible source trees into the core. The target core uses clean interfaces for a staged combination of event-driven execution, exchange data, technical research, LLM-assisted analysis, portfolio tooling, and agent-based simulation. License boundaries are documented in [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md).
-
-| Capability | Current implementation | Planned integration boundary |
-|---|---|---|
-| Market data | Read-only CCXT OHLCV adapter | Optional exchange-specific adapters |
-| Signals | Deterministic RSI, MACD histogram, ATR and sweep baseline | Strategy plugins and reproducible backtests |
-| Risk | Per-trade risk, notional cap, total portfolio exposure, max positions, daily loss and drawdown gates | Correlation-aware exposure and regime-specific limits |
-| Execution | Paper-only executor with fees and slippage | Separate, manually enabled live connector after paper validation |
-| LLM | Advisory module retained but not on the order path | Research summaries, never unvalidated order authority |
-| UI/API | Read-only local FastAPI endpoints plus `/ws/snapshot` state stream and `/api/audit` | Authenticated monitoring and configuration UI |
-
-## Safe local run
-
-Create a virtual environment, install `backend_trading_core/requirements.txt`, and copy `.env.example` to a local `.env` outside version control. The optional advisory LLM package set can be installed separately with `backend_trading_core/requirements-llm.txt`; it is not used by the default order path. The default mode remains paper-only. The local API exposes `/health`, `/api/stats`, `/api/positions`, `/api/logs`, `/api/trades`, `/api/audit`, and the read-only WebSocket `/ws/snapshot`. The market feed now retries with bounded exponential backoff and recreates the exchange client after failures.
-
-### Windows CMD / PowerShell
-
-From the repository root, activate the virtual environment and run the Windows-friendly entrypoint:
-
-```bat
-.venv\\Scripts\\activate
-cd backend_trading_core
-python run_backend.py
+```powershell
+git pull --ff-only origin master
+.\setup_windows.cmd
+.\.venv\Scripts\python.exe backend_trading_core\run_backend.py --demo
+Invoke-Item .\demo_output\report.html
 ```
 
-If you need the optional advisory LLM module, install it separately after the core succeeds:
+Cài đặt cần kết nối để tải dependency. Demo chạy offline, không dùng API key, AI hay frontend build. Báo cáo HTML và `snapshot.json` nằm trong `demo_output` (đổi bằng `--output`). Mở một hàng trong mục **Truy vết tín hiệu, rủi ro và fill** để xem chỉ báo, ID tín hiệu, quyết định, lệnh, fill, phí và biến động tài khoản. Demo dùng fixture BTC/USDT sinh từ seed 19 và cổ phiếu giả định DEMO trên lịch XNYS. Cùng input cho cùng ID và số dư.
 
-```bat
-python -m pip install -r requirements-llm.txt
+### Replay CSV cổ phiếu
+
+```powershell
+.\.venv\Scripts\python.exe backend_trading_core\run_backend.py --demo --equity-csv .\my-xnys.csv --equity-symbol MYTICKER
+Invoke-Item .\demo_output\report.html
 ```
 
-Do not delete `.venv` while it is the active environment. If `.venv` was deleted while the prompt still shows `(.venv)`, close that terminal, open a new CMD, and run `setup_windows.cmd` from the repository root.
+Dùng [file mẫu](backend_trading_core/demo/equity_xnys_sample.csv) làm schema `session,closed_at_utc,open,high,low,close,volume`. Mỗi file dùng một mã XNYS, USD, nến ngày **raw**, ít nhất 36 phiên đã kết thúc, từ cũ đến mới. `session` là ngày giao dịch New York (`YYYY-MM-DD`). `closed_at_utc` là giờ đóng cửa ISO 8601 UTC (`…Z`). Lịch XNYS kiểm tra phiên, giờ mùa hè, ngày nghỉ và đóng sớm. Replay khớp theo giá mở phiên kế. Số lượng mua làm tròn xuống theo lô một cổ phiếu, bước giá 0,01 USD. File raw không mang thông tin corporate action. Replay chưa hạch toán cổ tức/split, và khoảng có split có thể làm sai P&L. XNYS chỉ là thị trường được triển khai cho nhập liệu.
 
-In PowerShell, the activation command is `..\\.venv\\Scripts\\Activate.ps1` after entering `backend_trading_core`, or simply run `..\\.venv\\Scripts\\python.exe run_backend.py`. Do not use Linux commands such as `source .venv/bin/activate` or `PYTHONPATH=... command` in Windows CMD. Before starting, update the checkout with `git pull origin master`; the old implementation created a CCXT client during import and could emit a resource warning, while the current implementation creates and closes it asynchronously. For an automated Windows setup from the repository root, run `setup_windows.cmd`; it creates `.venv`, installs dependencies with that exact interpreter, and verifies Pandas/NumPy/FastAPI/Uvicorn before startup.
+## Paper dùng giá công khai
 
-For research, use `backtest.runner.run_backtest` for a single historical run and `backtest.validation.walk_forward_validate` for forward-only windows. Treat all output as research diagnostics, not a forecast.
+Ví dụ với Kraken BTC/USD. Mặc định là Binance BTC/USDT và feed đang tắt. Có thể sao chép [.env.example](.env.example) sang `.env` ở gốc repo để lưu cấu hình.
 
-Run tests with `PYTHONPATH=backend_trading_core python -m unittest discover -s tests -v`.
+```powershell
+$env:MARKET_FEED_ENABLED = 'true'
+$env:MARKET_EXCHANGE = 'kraken'
+$env:MARKET_SYMBOLS = 'BTC/USD'
+.\.venv\Scripts\python.exe backend_trading_core\run_backend.py
+```
 
-## Before any future live-trading work
+Mở dashboard từ cửa sổ PowerShell thứ hai:
 
-Do not add live order placement to the current process. A live connector must be a separately reviewed component with exchange testnet support, explicit key permissions, a kill switch, idempotent client order IDs, reconciliation, stale-data protection, maximum loss shutdown, audit logs, and an independent manual approval step. API keys must be rotated if they were ever committed to a public repository.
+```powershell
+Start-Process 'http://127.0.0.1:8000/dashboard'
+```
 
-## Source attribution
+Dùng F5 để cập nhật báo cáo. Bấm Ctrl+C trong cửa sổ chạy backend để dừng. Paper gọi CCXT công khai, bỏ nến đang chạy, tính tín hiệu ở nến trước và dùng giá đóng nến đã hoàn tất kế tiếp quan sát được lúc poll làm giá tham chiếu fill mô phỏng. Dữ liệu mất nến, trùng, sai thứ tự, OHLCV lỗi, nguồn lỗi và dữ liệu quá cũ hiển thị trên watchlist. Giá cũ của vị thế hiện có giữ nguyên giá đánh dấu cuối cùng và chặn mở thêm long trong cùng tài khoản đến khi feed cập nhật. Mỗi đồng tiền theo dõi riêng và các symbol dùng chung giới hạn theo quote currency. Feed lỗi không tự chuyển sang fixture.
 
-The six source repositories and their licenses are recorded in [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md). No GPL, LGPL or AGPL source tree is copied into the new core in this revision.
+Sổ paper lưu SQLite tại `OMNI_QUANT_DB_PATH`. Dùng một tiến trình runner cho mỗi file. File cũ giữ các bảng logs/trades/audit. Số dư của phiên bản trước nằm trong bộ nhớ, vì vậy sổ bền vững mới bắt đầu với vốn ban đầu. Đặt `PAPER_KILL_SWITCH=true` rồi khởi động lại để lưu trạng thái chặn mua. Đặt `false` để gỡ. Bỏ biến sẽ giữ trạng thái đã lưu. Hủy lệnh và đóng long có giá hợp lệ vẫn được phép khi kill switch hoặc giới hạn lỗ đang chặn lệnh mua. Với giá stale, lệnh đóng theo tín hiệu cũng bị chặn. Lệnh chờ đối soát tiếp tục giữ phần tiền/khối lượng liên quan. Nếu broker giả lập không tìm thấy lệnh theo client ID, sổ giữ trạng thái chờ và không gửi lại.
+
+### API loopback
+
+| Route | Nội dung |
+|---|---|
+| `GET /health`, `GET /` | Trạng thái process và chế độ paper |
+| `GET /api/stats`, `GET /api/positions` | Tài khoản quote chính theo schema cũ. `stats` bổ sung các sổ theo đồng tiền và watchlist |
+| `GET /api/logs`, `GET /api/trades`, `GET /api/audit` | Lịch sử và ID truy vết, có bộ lọc `limit` |
+| `WS /ws/snapshot` | Snapshot tương thích mỗi khoảng hai giây |
+| `GET /api/snapshot` | Các sổ tiền, watchlist và bằng chứng tín hiệu mới nhất |
+| `GET /dashboard` | Báo cáo HTML từ snapshot thực tế |
+
+Vue/Tauri cũ dùng các API tương thích. Dashboard mới dùng chung nguồn dữ liệu với backend. Core chạy độc lập với AI. Module LLM hiện có trong `requirements-llm.txt` nằm ngoài đường xử lý lệnh.
+
+## Tín hiệu và phép đo
+
+- Baseline `sweep-v1` cần 35 nến hoàn tất và dùng tối đa 99 nến gần nhất. RSI dùng EMA với alpha 1/14 trên phần tăng/giảm, RSI bằng 50 khi giá phẳng và 100 khi chỉ tăng. MACD histogram là EMA12 − EMA26 trừ EMA9 của MACD. ATR là trung bình 14 true range. Sweep BUY đòi hỏi xuyên đáy 10 nến trước rồi đóng trên đáy đó, histogram dương và RSI dưới 70. SELL dùng điều kiện đối xứng ở đỉnh, histogram âm và RSI trên 30. SELL chỉ giảm vị thế long. ATR không dương, thiếu warm-up hoặc điều kiện chưa đạt cho HOLD.
+- Giả thuyết `sweep-ema26-v1` giữ nguyên luật thoát, thêm điều kiện đóng trên EMA26 cho BUY. Báo cáo chạy baseline, giả thuyết và benchmark mua một lần với cùng giới hạn vốn. Các cửa sổ dùng 60 nến lịch sử và 45 nến ngoài mẫu. Quy tắc cố định trước khi đánh giá. Giá mở nến kế tiếp dùng cho tín hiệu replay, stop/take-profit quan sát tại giá mở và đóng, vị thế còn lại đóng tại giá cuối cửa sổ đánh giá.
+- Mỗi cửa sổ có 10.000 USDT, spread mô hình 0, slippage 5 bps và phí 6 bps mỗi chiều, rồi chạy lại với phí và slippage gấp đôi. Turnover là tổng giá trị fill chia cho vốn đầu kỳ. Exposure là trung bình tỷ lệ vị thế đánh dấu trên vốn mỗi nến. Báo cáo dùng dữ liệu tổng hợp và ít lệnh, phù hợp kiểm tra tính đúng chức năng. Baseline vẫn mặc định.
+
+## Kiểm thử và trạng thái môi trường
+
+```powershell
+$env:PYTHONPATH = 'backend_trading_core'
+.\.venv\Scripts\python.exe -m unittest discover -s tests -v
+```
+
+| Môi trường | Phạm vi |
+|---|---|
+| Offline demo | Hai thị trường synthetic, một báo cáo HTML và snapshot JSON |
+| Crypto paper | OHLCV spot công khai qua CCXT, fill giả lập và sổ SQLite |
+| Equity paper | Replay CSV phiên XNYS, tài khoản USD và lịch phiên |
+| Testnet | Hợp đồng submit/lookup/cancel kiểm thử với fake broker. Binance Spot Testnet được đối chiếu tài liệu. Kết nối đặt lệnh vào venue chưa triển khai |
+| Live | Chưa triển khai. Entry point lỗi nếu `LIVE_TRADING_ENABLED=true` |
+
+Xem [nguồn, phiên bản và giấy phép](THIRD_PARTY_NOTICES.md).

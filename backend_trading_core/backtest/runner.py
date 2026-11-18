@@ -1,41 +1,60 @@
-"""Small reproducible OHLCV backtest using the same paper risk engine."""
+"""Forward-only OHLCV replay with the same signal, risk and ledger as public paper."""
 from __future__ import annotations
 
 import pandas as pd
 
-from core.models import OrderIntent
+from core.models import Instrument, RiskLimits
 from core.order_executor import PaperExecutor
-from factor_zoo.technical import deterministic_signal, get_technical_context
+from core.pipeline import BASELINE, BENCHMARK, WARMUP_BARS, process_bar
+from data_pipeline.bars import utc_ms, validate_ohlcv
 
 
-def run_backtest(df: pd.DataFrame, symbol: str = "BTC/USDT", evaluation_start: int = 35) -> dict:
-    required = {"timestamp", "open", "high", "low", "close", "volume"}
-    if not required.issubset(df.columns):
-        raise ValueError(f"missing columns: {sorted(required - set(df.columns))}")
-    if len(df) < 36:
-        return {"trades": 0, "starting_equity": 0.0, "ending_equity": 0.0, "return_pct": 0.0, "max_drawdown_pct": 0.0}
-    executor = PaperExecutor()
-    equity_curve = [executor.equity]
-    evaluation_start = max(35, int(evaluation_start))
-    for index in range(35, len(df)):
-        history = df.iloc[:index]
-        bar = df.iloc[index]
-        open_price = float(bar["open"])
-        close_price = float(bar["close"])
-        executor.update_price(symbol, open_price)
-        if index < evaluation_start:
-            continue
-        context = get_technical_context(history)
-        signal = deterministic_signal(context)
-        if signal.value != "HOLD":
-            executor.execute(OrderIntent(symbol, signal, open_price, float(context["atr"]), "backtest", source_bar_timestamp=int(bar["timestamp"])))
-        executor.update_price(symbol, close_price)
-        equity_curve.append(executor.equity)
-    if executor.positions:
-        executor.close(symbol, float(df.iloc[-1]["close"]), "BACKTEST_END")
+def run_backtest(df: pd.DataFrame, symbol: str = "BTC/USDT", evaluation_start: int = WARMUP_BARS, *,
+                 instrument: Instrument | None = None, strategy: str = BASELINE,
+                 limits: RiskLimits | None = None, source: str = "OHLCV replay",
+                 keep_trace: bool = False, liquidate: bool = True) -> dict:
+    instrument = instrument or Instrument(symbol, "REPLAY", "USDT", "crypto spot", "1m")
+    frame = validate_ohlcv(df, interval_ms=60_000 if instrument.timeframe == "1m" else None)
+    if "closed_ms" not in frame:
+        if instrument.timeframe != "1m":
+            raise ValueError("non-minute replay requires UTC bar close timestamps")
+        frame["closed_ms"] = frame["timestamp"] + 60_000
+    frame["closed_ms"] = pd.to_numeric(frame["closed_ms"], errors="raise")
+    if (frame["closed_ms"].isna().any() or (frame["closed_ms"] % 1 != 0).any()
+            or (frame["closed_ms"] <= frame["timestamp"]).any()
+            or (frame["closed_ms"].iloc[:-1].to_numpy() > frame["timestamp"].iloc[1:].to_numpy()).any()
+            or (instrument.timeframe == "1m" and (frame["closed_ms"] - frame["timestamp"] != 60_000).any())):
+        raise ValueError("bar close timestamps are inconsistent with replay execution")
+    account = PaperExecutor(limits, currency=instrument.currency)
+    equity_curve = [account.equity]
+    exposure = []
+    events = []
+    evaluation_start = max(WARMUP_BARS, int(evaluation_start))
+    for index in range(evaluation_start, len(frame)):
+        event = process_bar(frame.iloc[:index + 1], instrument, account, source, strategy=strategy,
+                            benchmark_entry=index == evaluation_start)
+        if keep_trace:
+            events.append(event)
+        equity_curve.append(account.equity)
+        exposure.append(account.exposure / account.equity if account.equity > 0 else 0)
+    if exposure and liquidate and account.positions:
+        account.close(instrument.key, float(frame["close"].iloc[-1]), "BACKTEST_END",
+                      now=utc_ms(frame["closed_ms"].iloc[-1]), instrument=instrument)
+        equity_curve.append(account.equity)
     series = pd.Series(equity_curve, dtype=float)
-    high_water = series.cummax()
-    drawdown = ((high_water - series) / high_water.replace(0, pd.NA)).fillna(0.0)
-    start = float(executor.limits.starting_capital)
-    end = float(executor.capital)
-    return {"trades": len(executor.closed_trades), "starting_equity": start, "ending_equity": end, "return_pct": round((end / start - 1) * 100, 6), "max_drawdown_pct": round(float(drawdown.max()) * 100, 6)}
+    drawdown = 1 - series / series.cummax()
+    start = float(account.limits.starting_capital)
+    snapshot = account.snapshot()
+    fills = [fill for order in snapshot["orders"] for fill in order["fills"].values()]
+    return {
+        "strategy": strategy, "trades": sum(bool(o["fills"]) and o["side"] == "SELL" for o in snapshot["orders"]),
+        "fills": len(fills), "starting_equity": start, "ending_equity": account.equity,
+        "return_pct": round(100 * (account.equity / start - 1), 6),
+        "max_drawdown_pct": round(100 * max(float(drawdown.max()), snapshot["max_drawdown_pct"] / 100), 6),
+        "turnover_pct": round(100 * sum(f["amount"] * f["price"] for f in fills) / start, 6),
+        "mean_exposure_pct": round(100 * sum(exposure) / max(1, len(exposure)), 6),
+        "fees": account.fees,
+        "from": utc_ms(frame["timestamp"].iloc[evaluation_start]).isoformat() if exposure else None,
+        "to": utc_ms(frame["closed_ms"].iloc[-1]).isoformat() if exposure else None,
+        **({"events": events, "account": snapshot} if keep_trace else {}),
+    }
